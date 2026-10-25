@@ -1,0 +1,24 @@
+=== NEURAL ODE GLUCOSE - HELD-OUT VALIDATION ===
+Target: fasting OGTT glucose (mmol/L) in held-out test women with an OGTT: n=3354 of 4698
+Observed mean 4.35 (SD 0.53). OGTT week not recorded -> ODE curve read at 24/26/28 weeks.
+Input: booking predictors only (as on the dashboard). 1,000x bootstrap 95% CIs.
+
+Model                                  MAE (95% CI)          RMSE   R2 (95% CI)               Bias    Spearman Pred SD
+Baseline: training mean                0.358 (0.345-0.371)  0.527  -0.000 (-0.002 to -0.000)  -0.004  nan   0.000
+Baseline: linear regression (booking)  0.344 (0.332-0.356)  0.506  +0.079 (+0.062 to +0.097)  -0.007  0.265   0.141
+Neural ODE, week 12 (initial state)    0.356 (0.344-0.369)  0.512  +0.057 (+0.042 to +0.071)  +0.048  0.249   0.102
+Neural ODE, week 24                    0.681 (0.664-0.697)  0.844  -1.563 (-1.807 to -1.363)  -0.673  0.249   0.102
+Neural ODE, week 26 (primary)          0.795 (0.779-0.813)  0.942  -2.197 (-2.512 to -1.912)  -0.793  0.249   0.102
+Neural ODE, week 28                    0.914 (0.896-0.931)  1.045  -2.934 (-3.359 to -2.531)  -0.913  0.249   0.102
+
+Mean simulated change in glucose from week 12 to week 26: -0.841 mmol/L
+(no repeated glucose measurements exist, so this slope is not learned from data)
+
+Neural ODE GDM risk head vs GDM outcome (held-out, n=4698, observed 7.9%):
+- week_12: AUROC 0.699, Brier 0.0744, mean predicted 13.1%
+- week_26: AUROC 0.699, Brier 0.0711, mean predicted 10.3%
+- week_39: AUROC 0.699, Brier 0.0700, mean predicted 8.2%
+
+Interpretation guide
+- R2 <= 0 means no better than predicting the average. Compare the Neural ODE rows with the baselines.
+- Caveats: OGTT offered selectively (women without one excluded); OGTT week assumed.

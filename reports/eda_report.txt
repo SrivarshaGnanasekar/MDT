@@ -1,0 +1,35 @@
+=== MATERNAL DIGITAL TWIN - EDA REPORT ===
+
+Dataset Shape: 23490 rows, 48 columns
+Target distribution (GDM):
+Gestational Diabetes
+No     21636
+Yes     1854
+
+Top 20 missing value percentages:
+                                         Missing Count  Percentage (%)
+O_Thyroidfunctionblood                           23490      100.000000
+Presence of meconium                             22567       96.070668
+PreviousObstetricHistory                         21151       90.042571
+Glucoselevelblood                                20842       88.727118
+VitaminDlevelblood                               20506       87.296722
+Risk Factors                                     19379       82.498936
+AntenatalMedicalFactors                          18121       77.143465
+Category Caesarean Section                       16317       69.463602
+PrimaryIndicationforCaesarean                    16296       69.374202
+Contraction frequency prior to delivery          15827       67.377607
+Diastolic Blood Pressure                         15346       65.329928
+SystolicBloodPressureCuff                        13828       58.867603
+GlucoseToleranceTest                              8277       35.236271
+FolicAcidDose                                     7106       30.251171
+Glucoselevel120minblood                           6572       27.977863
+Glucoselevel0minblood                             6552       27.892720
+TotalApgarScoreat10minutes                        3961       16.862495
+APGAR_Score_5                                     2203        9.378459
+Gestation at booking (Weeks)                      2132        9.076203
+LOS mother after delivery.1                       2129        9.063431
+
+Feature Classification Statistics:
+  Static Booking Features: 16
+  Dynamic Pregnancy Features: 7
+  Delivery Outcome Features: 21

@@ -1,0 +1,134 @@
+{
+    "dataset_shapes": {
+        "real_rows": 18792,
+        "synth_rows": 500,
+        "features_count": 45
+    },
+    "distributional_similarity": {
+        "Index of Multiple Deprivation Rank": {
+            "wasserstein_distance": 2053.415653469561,
+            "jensen_shannon_distance": 0.179672630534618
+        },
+        "IMD Decile": {
+            "wasserstein_distance": 0.32827884206045116,
+            "jensen_shannon_distance": 0.15639390802149805
+        },
+        "AgeAtStartOfSpell": {
+            "wasserstein_distance": 0.6142886334610471,
+            "jensen_shannon_distance": 0.13473618669260115
+        },
+        "WeightMeasured": {
+            "wasserstein_distance": 3.9883880956276623,
+            "jensen_shannon_distance": 0.18035923784396368
+        },
+        "Height": {
+            "wasserstein_distance": 1.3474761412931693,
+            "jensen_shannon_distance": 0.1305880794841517
+        },
+        "Body Mass Index at Booking": {
+            "wasserstein_distance": 2.8284219706801133,
+            "jensen_shannon_distance": 0.20238239400667804
+        },
+        "Parity": {
+            "wasserstein_distance": 0.21361685823754784,
+            "jensen_shannon_distance": 0.1452413832095343
+        },
+        "Gravida": {
+            "wasserstein_distance": 0.8925706577483666,
+            "jensen_shannon_distance": 0.004295134840683856
+        },
+        "Glucoselevelblood": {
+            "wasserstein_distance": 0.854482486436131,
+            "jensen_shannon_distance": 0.34734932986020284
+        },
+        "Glucoselevel0minblood": {
+            "wasserstein_distance": 0.16980868747030287,
+            "jensen_shannon_distance": 0.04840888233982553
+        },
+        "Glucoselevel120minblood": {
+            "wasserstein_distance": 1.0513462309079795,
+            "jensen_shannon_distance": 0.010125005557675254
+        },
+        "Gestational Diabetes": {
+            "wasserstein_distance": 0.0009165602383993665,
+            "jensen_shannon_distance": 0.0012051476705197376
+        },
+        "SystolicBloodPressureCuff": {
+            "wasserstein_distance": 7.396627723190641,
+            "jensen_shannon_distance": 0.40788870088786083
+        },
+        "Diastolic Blood Pressure": {
+            "wasserstein_distance": 4.966877820533266,
+            "jensen_shannon_distance": 0.4026028914796725
+        },
+        "VitaminDlevelblood": {
+            "wasserstein_distance": 18.629551702788103,
+            "jensen_shannon_distance": 0.5838444196337635
+        },
+        "Contraction frequency prior to delivery": {
+            "wasserstein_distance": 0.9613464109484928,
+            "jensen_shannon_distance": 0.031045504395306924
+        },
+        "EstimatedTotalBloodLoss": {
+            "wasserstein_distance": 52.089574173301614,
+            "jensen_shannon_distance": 0.04001267080565844
+        },
+        "Gestation": {
+            "wasserstein_distance": 0.4084951042997019,
+            "jensen_shannon_distance": 0.15698376976106576
+        },
+        "Gestation (Days)": {
+            "wasserstein_distance": 3.0667547892720313,
+            "jensen_shannon_distance": 0.1430748338566806
+        },
+        "Gestation at booking (Weeks)": {
+            "wasserstein_distance": 0.8659246274272965,
+            "jensen_shannon_distance": 0.15049892473992602
+        },
+        "No_Of_previous_Csections": {
+            "wasserstein_distance": 0.04964282673478093,
+            "jensen_shannon_distance": 0.057235017799522295
+        },
+        "BabyBirthWeight": {
+            "wasserstein_distance": 203.47351213282246,
+            "jensen_shannon_distance": 0.13931566432357556
+        },
+        "BW Centile": {
+            "wasserstein_distance": 4.242307772855353,
+            "jensen_shannon_distance": 0.11805054227117602
+        },
+        "LOS mother after delivery": {
+            "wasserstein_distance": 0.40305363984673487,
+            "jensen_shannon_distance": 0.013581582534838326
+        },
+        "APGAR_Score_5": {
+            "wasserstein_distance": 0.13340633341913588,
+            "jensen_shannon_distance": 0.13047771481818463
+        },
+        "TotalApgarScoreat10minutes": {
+            "wasserstein_distance": 0.044776101542189,
+            "jensen_shannon_distance": 0.0711687656769013
+        }
+    },
+    "correlation_preservation_mae": 0.08067298844908327,
+    "machine_learning_utility": {
+        "trtr_real_only": {
+            "accuracy": 1.0,
+            "roc_auc": 1.0,
+            "f1_score": 1.0
+        },
+        "tstr_synthetic_only": {
+            "accuracy": 0.9210302256279268,
+            "roc_auc": 0.5320544166666148,
+            "f1_score": 0.0
+        },
+        "relative_utility_pct": 53.20544166666148
+    },
+    "privacy_leakage": {
+        "min_distance_to_real": 0.8691505245320943,
+        "mean_distance_to_real": 2.730284485306336,
+        "near_duplicates_count": 0,
+        "near_duplicates_percent": 0.0,
+        "privacy_risk": "Low"
+    }
+}

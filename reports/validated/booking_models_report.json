@@ -1,0 +1,510 @@
+{
+  "quality_rules": "booking GA outside 4-42 weeks -> missing; Gravida > 20 -> missing; systolic BP outside 70-250 mmHg -> missing; diastolic BP outside 30-150 mmHg -> missing. Missing values are median-imputed inside each fold, with missingness indicators for the two BP columns.",
+  "library_versions": {
+    "python": "3.13.7",
+    "scikit-learn": "1.8.0",
+    "xgboost": "3.3.0",
+    "catboost": "1.2.10",
+    "numpy": "2.2.6",
+    "pandas": "2.3.3"
+  },
+  "generated_utc": "2026-10-25T02:43:08+00:00",
+  "gdm": {
+    "n_train": 18792,
+    "n_test": 4698,
+    "prevalence_train": 0.07891656023839932,
+    "prevalence_test": 0.07896977437207323,
+    "metrics": {
+      "Logistic Regression": {
+        "AUROC": 0.7138727117447832,
+        "AUROC_95CI": [
+          0.6856521850865351,
+          0.7415250615695866
+        ],
+        "AUPRC": 0.1713597095371429,
+        "AUPRC_95CI": [
+          0.14586053106352137,
+          0.20363804644896402
+        ],
+        "Brier": 0.0697118915951477,
+        "Brier_95CI": [
+          0.06363940013874073,
+          0.07566293406806607
+        ],
+        "Scaled_Brier": 0.04154420552302762,
+        "Calibration_intercept": 0.004935492884017574,
+        "Calibration_slope": 0.9291185448659866,
+        "Mean_predicted": 0.07863146011703186,
+        "Observed_rate": 0.07896977437207323,
+        "OOF_AUROC": 0.7188557965880339
+      },
+      "Random Forest": {
+        "AUROC": 0.6996487298147344,
+        "AUROC_95CI": [
+          0.6731408906234292,
+          0.7262748225235809
+        ],
+        "AUPRC": 0.157977823017783,
+        "AUPRC_95CI": [
+          0.13316791156835844,
+          0.18899458701975863
+        ],
+        "Brier": 0.07019485617003302,
+        "Brier_95CI": [
+          0.0641292415080508,
+          0.07626865581114302
+        ],
+        "Scaled_Brier": 0.034904015668271726,
+        "Calibration_intercept": 0.002394747053371831,
+        "Calibration_slope": 1.2622938477262466,
+        "Mean_predicted": 0.07880004924219432,
+        "Observed_rate": 0.07896977437207323,
+        "OOF_AUROC": 0.7076158096885352
+      },
+      "XGBoost": {
+        "AUROC": 0.7035557463105417,
+        "AUROC_95CI": [
+          0.676746472862942,
+          0.7304613885514952
+        ],
+        "AUPRC": 0.15844418436264787,
+        "AUPRC_95CI": [
+          0.13537294237069208,
+          0.1897017787954975
+        ],
+        "Brier": 0.07011203258708944,
+        "Brier_95CI": [
+          0.06404403858596422,
+          0.07620097192901226
+        ],
+        "Scaled_Brier": 0.036042741661429845,
+        "Calibration_intercept": 0.010407719889581214,
+        "Calibration_slope": 0.9142889956800175,
+        "Mean_predicted": 0.0782530254705402,
+        "Observed_rate": 0.07896977437207323,
+        "OOF_AUROC": 0.7134227194120654
+      },
+      "CatBoost": {
+        "AUROC": 0.7070591042143077,
+        "AUROC_95CI": [
+          0.6802122996591085,
+          0.7339095111308372
+        ],
+        "AUPRC": 0.15833791177479364,
+        "AUPRC_95CI": [
+          0.13529986995650112,
+          0.18667382875945313
+        ],
+        "Brier": 0.07001644395540473,
+        "Brier_95CI": [
+          0.06407999711179214,
+          0.07606629184177222
+        ],
+        "Scaled_Brier": 0.03735697192871912,
+        "Calibration_intercept": 0.016731528798795383,
+        "Calibration_slope": 0.976008228566565,
+        "Mean_predicted": 0.07781491544648213,
+        "Observed_rate": 0.07896977437207323,
+        "OOF_AUROC": 0.7148675222144227
+      },
+      "Stacking Ensemble": {
+        "AUROC": 0.711515544904838,
+        "AUROC_95CI": [
+          0.6835752050811708,
+          0.7384008392840062
+        ],
+        "AUPRC": 0.16588627857180996,
+        "AUPRC_95CI": [
+          0.14118040377065244,
+          0.19830583133013738
+        ],
+        "Brier": 0.07054392431710758,
+        "Brier_95CI": [
+          0.06427186482051873,
+          0.07655386482455712
+        ],
+        "Scaled_Brier": 0.030104742824350605,
+        "Calibration_intercept": 0.004717057005273946,
+        "Calibration_slope": 0.9620034889948863,
+        "Mean_predicted": 0.07864435938069801,
+        "Observed_rate": 0.07896977437207323,
+        "OOF_AUROC": 0.7188081130700873
+      }
+    },
+    "operating_points": {
+      "youden_oof": {
+        "threshold": 0.06336515629542093,
+        "flagged_pct": 43.06087696892295,
+        "sensitivity": 0.7358490566037735,
+        "specificity": 0.5955627455511902,
+        "ppv": 0.13494809688581316,
+        "npv": 0.9633644859813084
+      },
+      "top20pct_oof": {
+        "threshold": 0.09606555922326734,
+        "flagged_pct": 19.9659429544487,
+        "sensitivity": 0.42857142857142855,
+        "specificity": 0.8199676450196441,
+        "ppv": 0.1695095948827292,
+        "npv": 0.9436170212765957
+      }
+    },
+    "subgroup_booking_le_12wk": {
+      "n": 3195,
+      "prevalence": 0.0838810641627543,
+      "AUROC": 0.7114155903094709,
+      "AUROC_95CI": [
+        0.6816010529389639,
+        0.7400046344413829
+      ],
+      "Brier": 0.07500823067777095
+    },
+    "shap_mean_abs_top12": {
+      "AgeAtStartOfSpell": 0.3158,
+      "Body_Mass_Index_at_Booking": 0.3026,
+      "SystolicBloodPressureCuff_missing": 0.2247,
+      "Ethnicity_OTH": 0.1699,
+      "Gestation_at_booking_(Weeks)": 0.1455,
+      "Ethnicity_GBR": 0.1306,
+      "Ethnicity_IND": 0.0664,
+      "Parity": 0.0513,
+      "Diastolic_Blood_Pressure": 0.0385,
+      "Diastolic_Blood_Pressure_missing": 0.0377,
+      "SystolicBloodPressureCuff": 0.0275,
+      "Index_of_Multiple_Deprivation_Rank": 0.0262
+    }
+  },
+  "gdm_legacy_class_weighted": {
+    "metrics": {
+      "Stacking Ensemble": {
+        "AUROC": 0.7144271193789139,
+        "AUROC_95CI": [
+          0.6871055299849449,
+          0.7420169652460298
+        ],
+        "AUPRC": 0.16760291922478293,
+        "AUPRC_95CI": [
+          0.1435147990559145,
+          0.19912714003103296
+        ],
+        "Brier": 0.21584817301802256,
+        "Brier_95CI": [
+          0.21098442768934952,
+          0.2207573250632902
+        ],
+        "Scaled_Brier": -1.967656269576707,
+        "Calibration_intercept": -2.4659920240908098,
+        "Calibration_slope": 0.9269859031629072,
+        "Mean_predicted": 0.43880933877449363,
+        "Observed_rate": 0.07896977437207323,
+        "OOF_AUROC": 0.7202587204836979
+      }
+    }
+  },
+  "macrosomia": {
+    "n_train": 18792,
+    "n_test": 4698,
+    "prevalence_train": 0.0801404853128991,
+    "prevalence_test": 0.07982120051085569,
+    "metrics": {
+      "Logistic Regression": {
+        "AUROC": 0.6292364870074794,
+        "AUROC_95CI": [
+          0.6016601509129625,
+          0.6574591499986855
+        ],
+        "AUPRC": 0.12221764047236944,
+        "AUPRC_95CI": [
+          0.10550517254127448,
+          0.1468895829569203
+        ],
+        "Brier": 0.07235651412946742,
+        "Brier_95CI": [
+          0.06615534259174494,
+          0.07882473119548038
+        ],
+        "Scaled_Brier": 0.01488448819162147,
+        "Calibration_intercept": 0.004047071759800014,
+        "Calibration_slope": 0.9758252970671563,
+        "Mean_predicted": 0.07952920076979382,
+        "Observed_rate": 0.07982120051085569,
+        "OOF_AUROC": 0.6274647639531733
+      },
+      "Random Forest": {
+        "AUROC": 0.6340936078340659,
+        "AUROC_95CI": [
+          0.605407945077954,
+          0.6618480484666073
+        ],
+        "AUPRC": 0.12387309381887716,
+        "AUPRC_95CI": [
+          0.10649571964694265,
+          0.1483288277748422
+        ],
+        "Brier": 0.07237957262543977,
+        "Brier_95CI": [
+          0.06614438296502104,
+          0.0788116825440285
+        ],
+        "Scaled_Brier": 0.01457055264159357,
+        "Calibration_intercept": 0.0014659406689155796,
+        "Calibration_slope": 1.5026725922205237,
+        "Mean_predicted": 0.07971440516818537,
+        "Observed_rate": 0.07982120051085569,
+        "OOF_AUROC": 0.6184613238203805
+      },
+      "XGBoost": {
+        "AUROC": 0.6333817564962603,
+        "AUROC_95CI": [
+          0.6058774449783463,
+          0.6610145701634708
+        ],
+        "AUPRC": 0.12382737707928226,
+        "AUPRC_95CI": [
+          0.1061738805622533,
+          0.14852515862972906
+        ],
+        "Brier": 0.07225378110444745,
+        "Brier_95CI": [
+          0.06609942756091168,
+          0.0786603215777184
+        ],
+        "Scaled_Brier": 0.016283172162785187,
+        "Calibration_intercept": 0.01065806106693589,
+        "Calibration_slope": 1.011680050767532,
+        "Mean_predicted": 0.07905465479196387,
+        "Observed_rate": 0.07982120051085569,
+        "OOF_AUROC": 0.62554617812448
+      },
+      "CatBoost": {
+        "AUROC": 0.6400746395250212,
+        "AUROC_95CI": [
+          0.612193279409322,
+          0.6667253573635533
+        ],
+        "AUPRC": 0.123433360733141,
+        "AUPRC_95CI": [
+          0.10622217589982863,
+          0.14771048677624773
+        ],
+        "Brier": 0.0722049885517568,
+        "Brier_95CI": [
+          0.06605752151099305,
+          0.07852629532143893
+        ],
+        "Scaled_Brier": 0.01694747034097377,
+        "Calibration_intercept": 0.008390688570340405,
+        "Calibration_slope": 1.1707257498362198,
+        "Mean_predicted": 0.07921525219404497,
+        "Observed_rate": 0.07982120051085569,
+        "OOF_AUROC": 0.627334504782367
+      },
+      "Stacking Ensemble": {
+        "AUROC": 0.638708304418228,
+        "AUROC_95CI": [
+          0.6109578984258014,
+          0.6666413218098293
+        ],
+        "AUPRC": 0.12442914507227255,
+        "AUPRC_95CI": [
+          0.10769717319194579,
+          0.1477016925242078
+        ],
+        "Brier": 0.07230100891084656,
+        "Brier_95CI": [
+          0.0661175629863614,
+          0.07871018099614485
+        ],
+        "Scaled_Brier": 0.015640177606839556,
+        "Calibration_intercept": 0.005459561422911221,
+        "Calibration_slope": 1.2974555213476404,
+        "Mean_predicted": 0.0794253043149056,
+        "Observed_rate": 0.07982120051085569,
+        "OOF_AUROC": 0.6309645524500787
+      }
+    },
+    "operating_points": {
+      "youden_oof": {
+        "threshold": 0.07159940784287341,
+        "flagged_pct": 53.74627501064283,
+        "sensitivity": 0.712,
+        "specificity": 0.477677538746241,
+        "ppv": 0.10574257425742574,
+        "npv": 0.9502991256327658
+      },
+      "top20pct_oof": {
+        "threshold": 0.09850235440545299,
+        "flagged_pct": 19.157088122605366,
+        "sensitivity": 0.30933333333333335,
+        "specificity": 0.8186444598658339,
+        "ppv": 0.1288888888888889,
+        "npv": 0.9318062137967351
+      }
+    },
+    "subgroup_booking_le_12wk": {
+      "n": 3195,
+      "prevalence": 0.08075117370892018,
+      "AUROC": 0.624783238710597,
+      "AUROC_95CI": [
+        0.5923004411325118,
+        0.6617484050835404
+      ],
+      "Brier": 0.07326072905375558
+    },
+    "shap_mean_abs_top12": {
+      "Body_Mass_Index_at_Booking": 0.214,
+      "Ethnicity_WEU": 0.1117,
+      "Ethnicity_OTH": 0.0884,
+      "Ethnicity_GBR": 0.0869,
+      "AgeAtStartOfSpell": 0.0814,
+      "Ethnicity_IND": 0.0541,
+      "Index_of_Multiple_Deprivation_Rank": 0.0492,
+      "Parity": 0.0489,
+      "Diastolic_Blood_Pressure": 0.0474,
+      "Diastolic_Blood_Pressure_missing": 0.0409,
+      "SystolicBloodPressureCuff_missing": 0.0402,
+      "Gravida": 0.0368
+    }
+  },
+  "macrosomia_sensitivity_LGA": {
+    "n_train": 18792,
+    "n_test": 4698,
+    "prevalence_train": 0.11696466581524052,
+    "prevalence_test": 0.11877394636015326,
+    "metrics": {
+      "Logistic Regression": {
+        "AUROC": 0.5504869876889512,
+        "AUROC_95CI": [
+          0.5253729882423375,
+          0.575259178619776
+        ],
+        "AUPRC": 0.13493933621548063,
+        "AUPRC_95CI": [
+          0.12220529662795865,
+          0.15218319806232536
+        ],
+        "Brier": 0.10449182700586677,
+        "Brier_95CI": [
+          0.09744886724814764,
+          0.11145571452035073
+        ],
+        "Scaled_Brier": 0.0016707226554485421,
+        "Calibration_intercept": 0.01773719548615128,
+        "Calibration_slope": 0.6464056605283887,
+        "Mean_predicted": 0.11694080919149373,
+        "Observed_rate": 0.11877394636015326,
+        "OOF_AUROC": 0.5527288056910843
+      },
+      "Random Forest": {
+        "AUROC": 0.5618876941457587,
+        "AUROC_95CI": [
+          0.5384509024614547,
+          0.5865130477050039
+        ],
+        "AUPRC": 0.13714791152254563,
+        "AUPRC_95CI": [
+          0.1237529156780362,
+          0.15272982471221977
+        ],
+        "Brier": 0.10426870732752071,
+        "Brier_95CI": [
+          0.09718790826292033,
+          0.11127773254611474
+        ],
+        "Scaled_Brier": 0.0038024387295877426,
+        "Calibration_intercept": 0.018162220043818615,
+        "Calibration_slope": 1.338709439655913,
+        "Mean_predicted": 0.11689071796779456,
+        "Observed_rate": 0.11877394636015326,
+        "OOF_AUROC": 0.5524176492309014
+      },
+      "XGBoost": {
+        "AUROC": 0.5607665402663066,
+        "AUROC_95CI": [
+          0.5370627351897634,
+          0.5848175130555421
+        ],
+        "AUPRC": 0.14111477379747783,
+        "AUPRC_95CI": [
+          0.1274603945148121,
+          0.1601424324824771
+        ],
+        "Brier": 0.10426917259577459,
+        "Brier_95CI": [
+          0.09708468461279063,
+          0.11136650355601029
+        ],
+        "Scaled_Brier": 0.003797993492740237,
+        "Calibration_intercept": 0.0244359227361436,
+        "Calibration_slope": 0.7967678374197753,
+        "Mean_predicted": 0.11625610792390105,
+        "Observed_rate": 0.11877394636015326,
+        "OOF_AUROC": 0.5462599783097983
+      },
+      "CatBoost": {
+        "AUROC": 0.5566451093449691,
+        "AUROC_95CI": [
+          0.5318304539075944,
+          0.5814746614780182
+        ],
+        "AUPRC": 0.13918003654622804,
+        "AUPRC_95CI": [
+          0.12442600432844464,
+          0.1573190986310567
+        ],
+        "Brier": 0.10430469365996763,
+        "Brier_95CI": [
+          0.09715079142870006,
+          0.1113094179898081
+        ],
+        "Scaled_Brier": 0.003458620363161913,
+        "Calibration_intercept": 0.022970255118530764,
+        "Calibration_slope": 0.938485073765907,
+        "Mean_predicted": 0.11640073696821383,
+        "Observed_rate": 0.11877394636015326,
+        "OOF_AUROC": 0.5493586157576058
+      },
+      "Stacking Ensemble": {
+        "AUROC": 0.5609492147594064,
+        "AUROC_95CI": [
+          0.5374891079827709,
+          0.5860167883435589
+        ],
+        "AUPRC": 0.13927164286283222,
+        "AUPRC_95CI": [
+          0.1258899332323103,
+          0.1570823657784263
+        ],
+        "Brier": 0.10431934879565653,
+        "Brier_95CI": [
+          0.09721661291529976,
+          0.11135320280526843
+        ],
+        "Scaled_Brier": 0.0033186031824796736,
+        "Calibration_intercept": 0.019411494821005775,
+        "Calibration_slope": 1.420562600078476,
+        "Mean_predicted": 0.11676102613579661,
+        "Observed_rate": 0.11877394636015326,
+        "OOF_AUROC": 0.5532832339171674
+      }
+    },
+    "operating_points": {
+      "youden_oof": {
+        "threshold": 0.11380525967174458,
+        "flagged_pct": 57.98212005108557,
+        "sensitivity": 0.6666666666666666,
+        "specificity": 0.4318840579710145,
+        "ppv": 0.13656387665198239,
+        "npv": 0.9057750759878419
+      },
+      "top20pct_oof": {
+        "threshold": 0.12627196378811295,
+        "flagged_pct": 19.987228607918265,
+        "sensitivity": 0.25448028673835127,
+        "specificity": 0.807487922705314,
+        "ppv": 0.15122470713525027,
+        "npv": 0.8893322692205374
+      }
+    }
+  }
+}

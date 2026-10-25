@@ -1,0 +1,29 @@
+# --- secrets (never push) ---
+.env
+*.pem
+
+# --- Python / tool caches ---
+__pycache__/
+*.pyc
+.pytest_cache/
+catboost_info/
+.ipynb_checkpoints/
+.streamlit/secrets.toml
+
+# --- local backups, scratch and logs ---
+_backup_*/
+tmp/
+*.log
+*.zip
+try_ac.py
+try_sweep.py
+1dccf454_sw4_f478.png
+implementation_plan 1
+
+# --- datasets (download from the original sources; see paper references) ---
+data/
+*.mha
+tests/sample_mha/
+
+# --- superseded model weights ---
+models/new_model/best_attunet_old_casesplit.pth

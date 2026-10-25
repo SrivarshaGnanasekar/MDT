@@ -1,0 +1,64 @@
+=== MDT-GEN VALIDATED EARLY-BOOKING MODELS - HELD-OUT EVIDENCE ===
+Generated 2026-10-25T02:43:08+00:00 | libraries {"python": "3.13.7", "scikit-learn": "1.8.0", "xgboost": "3.3.0", "catboost": "1.2.10", "numpy": "2.2.6", "pandas": "2.3.3"}
+Predictors: 10 booking features only (no OGTT, no GDM diagnosis for macrosomia, no delivery variables).
+No class re-weighting. Thresholds chosen on out-of-fold TRAINING predictions; test set used once.
+Data-quality rules: booking GA outside 4-42 weeks -> missing; Gravida > 20 -> missing; systolic BP outside 70-250 mmHg -> missing; diastolic BP outside 30-150 mmHg -> missing. Missing values are median-imputed inside each fold, with missingness indicators for the two BP columns.
+
+######## A. GESTATIONAL DIABETES ########
+Train n=18792 (prevalence 7.89%), test n=4698 (prevalence 7.90%)
+
+A1. Held-out test performance (1,000x bootstrap 95% CI)
+                          AUROC (95% CI)       AUPRC (95% CI)       Brier (95% CI) Scaled Brier Cal. intercept Cal. slope OOF AUROC
+Model                                                                                                                              
+Logistic Regression  0.714 (0.686-0.742)  0.171 (0.146-0.204)  0.070 (0.064-0.076)        0.042           0.00       0.93     0.719
+Random Forest        0.700 (0.673-0.726)  0.158 (0.133-0.189)  0.070 (0.064-0.076)        0.035           0.00       1.26     0.708
+XGBoost              0.704 (0.677-0.730)  0.158 (0.135-0.190)  0.070 (0.064-0.076)        0.036           0.01       0.91     0.713
+CatBoost             0.707 (0.680-0.734)  0.158 (0.135-0.187)  0.070 (0.064-0.076)        0.037           0.02       0.98     0.715
+Stacking Ensemble    0.712 (0.684-0.738)  0.166 (0.141-0.198)  0.071 (0.064-0.077)        0.030           0.00       0.96     0.719
+
+A2. Recalibration effect (stacking ensemble, held-out test)
+                       AUROC   Brier   Scaled Brier  Cal. intercept  Cal. slope  Mean predicted vs observed
+Legacy class-weighted  0.714   0.2158  -1.968        -2.47           0.93        43.9% vs 7.9%
+Recalibrated           0.712   0.0705  +0.030        +0.00           0.96        7.9% vs 7.9%
+
+A3. Operating points
+- Youden (t=0.063): flagged 43.1%, sens 0.736, spec 0.596, PPV 0.135, NPV 0.963
+- Top 20% risk (dashboard flag) (t=0.096): flagged 20.0%, sens 0.429, spec 0.820, PPV 0.170, NPV 0.944
+
+A4. Booking GA <= 12 weeks subgroup: n=3195, AUROC 0.711 (0.682-0.740), Brier 0.0750
+
+######## B. MACROSOMIA (birthweight >= 4000 g) ########
+Train n=18792 (prevalence 8.01%), test n=4698 (prevalence 7.98%)
+
+B1. Held-out test performance (1,000x bootstrap 95% CI)
+                          AUROC (95% CI)       AUPRC (95% CI)       Brier (95% CI) Scaled Brier Cal. intercept Cal. slope OOF AUROC
+Model                                                                                                                              
+Logistic Regression  0.629 (0.602-0.657)  0.122 (0.106-0.147)  0.072 (0.066-0.079)        0.015           0.00       0.98     0.627
+Random Forest        0.634 (0.605-0.662)  0.124 (0.106-0.148)  0.072 (0.066-0.079)        0.015           0.00       1.50     0.618
+XGBoost              0.633 (0.606-0.661)  0.124 (0.106-0.149)  0.072 (0.066-0.079)        0.016           0.01       1.01     0.626
+CatBoost             0.640 (0.612-0.667)  0.123 (0.106-0.148)  0.072 (0.066-0.079)        0.017           0.01       1.17     0.627
+Stacking Ensemble    0.639 (0.611-0.667)  0.124 (0.108-0.148)  0.072 (0.066-0.079)        0.016           0.01       1.30     0.631
+
+B2. Operating points
+- Youden (t=0.072): flagged 53.7%, sens 0.712, spec 0.478, PPV 0.106, NPV 0.950
+- Top 20% risk (dashboard flag) (t=0.099): flagged 19.2%, sens 0.309, spec 0.819, PPV 0.129, NPV 0.932
+
+B3. Booking GA <= 12 weeks subgroup: n=3195, AUROC 0.625 (0.592-0.662), Brier 0.0733
+
+B4. Sensitivity outcome LGA (BW centile >= 90), test prevalence 11.88%
+                          AUROC (95% CI)       AUPRC (95% CI)       Brier (95% CI) Scaled Brier Cal. intercept Cal. slope OOF AUROC
+Model                                                                                                                              
+Logistic Regression  0.550 (0.525-0.575)  0.135 (0.122-0.152)  0.104 (0.097-0.111)        0.002           0.02       0.65     0.553
+Random Forest        0.562 (0.538-0.587)  0.137 (0.124-0.153)  0.104 (0.097-0.111)        0.004           0.02       1.34     0.552
+XGBoost              0.561 (0.537-0.585)  0.141 (0.127-0.160)  0.104 (0.097-0.111)        0.004           0.02       0.80     0.546
+CatBoost             0.557 (0.532-0.581)  0.139 (0.124-0.157)  0.104 (0.097-0.111)        0.003           0.02       0.94     0.549
+Stacking Ensemble    0.561 (0.537-0.586)  0.139 (0.126-0.157)  0.104 (0.097-0.111)        0.003           0.02       1.42     0.553
+
+######## C. SHAP mean |value| (CatBoost base model, test set) ########
+GDM: {"AgeAtStartOfSpell": 0.3158, "Body_Mass_Index_at_Booking": 0.3026, "SystolicBloodPressureCuff_missing": 0.2247, "Ethnicity_OTH": 0.1699, "Gestation_at_booking_(Weeks)": 0.1455, "Ethnicity_GBR": 0.1306, "Ethnicity_IND": 0.0664, "Parity": 0.0513, "Diastolic_Blood_Pressure": 0.0385, "Diastolic_Blood_Pressure_missing": 0.0377, "SystolicBloodPressureCuff": 0.0275, "Index_of_Multiple_Deprivation_Rank": 0.0262}
+Macrosomia: {"Body_Mass_Index_at_Booking": 0.214, "Ethnicity_WEU": 0.1117, "Ethnicity_OTH": 0.0884, "Ethnicity_GBR": 0.0869, "AgeAtStartOfSpell": 0.0814, "Ethnicity_IND": 0.0541, "Index_of_Multiple_Deprivation_Rank": 0.0492, "Parity": 0.0489, "Diastolic_Blood_Pressure": 0.0474, "Diastolic_Blood_Pressure_missing": 0.0409, "SystolicBloodPressureCuff_missing": 0.0402, "Gravida": 0.0368}
+
+Notes
+- Calibration slope < 1: predictions too extreme; > 1: too modest. Intercept ~0: mean risk matches observed rate.
+- Internal split-sample validation in a single dataset; external validation is still required before clinical use.
+- Saved bundles: models/validated/gdm_booking_model.joblib, models/validated/macrosomia_booking_model.joblib

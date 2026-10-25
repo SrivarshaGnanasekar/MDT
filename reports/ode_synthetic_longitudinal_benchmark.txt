@@ -1,0 +1,16 @@
+=== PROOF-OF-CONCEPT NEURAL ODE LONGITUDINAL BENCHMARK REPORT ===
+Dataset Source: Zenodo (Pinto et al., Data in Brief 2026, PMC13273859)
+Cohort Size: 5,000 synthetic pregnancies
+Experimental Split: 4,000 training patients / 1,000 held-out test patients
+Task: Continuous-time forecasting of withheld 3rd-trimester visits (Weeks 29, 32, 36, 39) from 1st-2nd trimester inputs (Weeks 10, 16, 22).
+
+Benchmark Performance Table (N=1,000 Test Patients):
+                                  Model  Overall MAE (kg)  Overall RMSE (kg)  Week 29 MAE  Week 32 MAE  Week 36 MAE  Week 39 MAE
+Last Observation Carried Forward (LOCF)          5.719449           6.381496     3.044400     4.657499     6.472499     8.703398
+             Linear Trend Extrapolation          3.153953           3.768246     1.571593     2.527031     3.471866     5.045323
+       Continuous-Time Neural ODE (RK4)          0.868517           1.100172     0.561045     0.717329     1.029082     1.166611
+
+Key Findings for Faculty / Manuscript:
+1. Proof of Technical Feasibility: The Neural ODE successfully learns continuous dynamical systems from multi-visit longitudinal antenatal trajectories and integrates forward via RK4.
+2. Error Metrics: The continuous Neural ODE achieves substantially lower forecasting error (Overall MAE = 0.87 kg) compared to standard clinical LOCF baseline (5.72 kg) and competitive performance against linear extrapolation.
+3. Methodological Distinction: This benchmark demonstrates the algorithmic capability of continuous ODE integration on synthetic longitudinal data, while clinical GDM prediction is validated separately on real NHS patient records (St Mary's cohort).
