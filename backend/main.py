@@ -130,7 +130,12 @@ class UserLoginInput(BaseModel):
 
 class VitalLogInput(BaseModel):
     patient_id: str
-    gestational_age_weeks: float
+    gestational_age_weeks: float = Field(..., description="Current gestational week of this observation")
+    booking_ga_weeks: Optional[float] = Field(
+        None, description="Gestational age at the booking visit. If omitted, the first recorded visit's week is used.")
+    booking_bmi: Optional[float] = Field(None, description="BMI at the booking visit (model input). If omitted, the first visit's BMI is used.")
+    booking_sbp: Optional[float] = Field(None, description="Systolic BP at booking (model input). If omitted, the first visit's value is used.")
+    booking_dbp: Optional[float] = Field(None, description="Diastolic BP at booking (model input). If omitted, the first visit's value is used.")
     systolic_bp: Optional[float] = None
     diastolic_bp: Optional[float] = None
     glucose_blood: Optional[float] = None
@@ -208,6 +213,31 @@ def get_patients_list():
 
 # --- Real-Time Vitals Logging & Digital Twin Sync Endpoints ---
 
+def _booking_and_current_ga(history: List[Dict[str, Any]], current: float) -> float:
+    """Booking GA is fixed at the first (booking) visit; later visits must not overwrite it,
+    because the booking models were trained on gestational age AT BOOKING."""
+    booking = None
+    for rec in history:
+        if rec.get("booking_ga_weeks") is not None:
+            booking = float(rec["booking_ga_weeks"])
+            break
+    if booking is None and history and history[0].get("gestational_age_weeks") is not None:
+        booking = float(history[0]["gestational_age_weeks"])
+    if booking is None:
+        booking = float(current)
+    return min(booking, float(current))
+
+
+def _booking_vital(history: List[Dict[str, Any]], booking_field: str, visit_field: str) -> Optional[float]:
+    """Booking BMI/BP: explicit booking value if recorded, else the first visit's value."""
+    for rec in history:
+        if rec.get(booking_field) is not None:
+            return float(rec[booking_field])
+    if history and history[0].get(visit_field) is not None:
+        return float(history[0][visit_field])
+    return None
+
+
 @app.post("/api/patient/vitals/log")
 def log_vital_observation(data: VitalLogInput):
     """Logs real-time vital observation to MongoDB Atlas and updates digital twin state."""
@@ -217,34 +247,43 @@ def log_vital_observation(data: VitalLogInput):
     # Load twin and update maternal state & visit record
     twin = load_or_create_twin(data.patient_id)
     
+    history = get_vitals_history(data.patient_id)
     maternal_update = {}
-    if data.systolic_bp: maternal_update["SystolicBloodPressureCuff"] = data.systolic_bp
-    if data.diastolic_bp: maternal_update["Diastolic Blood Pressure"] = data.diastolic_bp
+    # Today's vitals are tracked separately; the booking models use the BOOKING values below
+    if data.systolic_bp: maternal_update["current_systolic_bp"] = data.systolic_bp
+    if data.diastolic_bp: maternal_update["current_diastolic_bp"] = data.diastolic_bp
+    if data.bmi: maternal_update["current_bmi"] = data.bmi
     if data.glucose_blood: maternal_update["Glucoselevelblood"] = data.glucose_blood
     if data.glucose_0min: maternal_update["Glucoselevel0minblood"] = data.glucose_0min
     if data.glucose_120min: maternal_update["Glucoselevel120minblood"] = data.glucose_120min
-    if data.bmi: maternal_update["Body Mass Index at Booking"] = data.bmi
-    if data.gestational_age_weeks: maternal_update["Gestation at booking (Weeks)"] = data.gestational_age_weeks
+    for model_key, explicit, booking_field, visit_field in (
+        ("Body Mass Index at Booking", data.booking_bmi, "booking_bmi", "bmi"),
+        ("SystolicBloodPressureCuff", data.booking_sbp, "booking_sbp", "systolic_bp"),
+        ("Diastolic Blood Pressure", data.booking_dbp, "booking_dbp", "diastolic_bp"),
+    ):
+        val = explicit if explicit is not None else _booking_vital(history, booking_field, visit_field)
+        if val is not None:
+            maternal_update[model_key] = float(val)
+    # Booking GA comes from the booking visit, not from this observation's current week
+    booking_ga = data.booking_ga_weeks if data.booking_ga_weeks is not None else \
+        _booking_and_current_ga(history, data.gestational_age_weeks)
+    maternal_update["Gestation at booking (Weeks)"] = float(min(booking_ga, data.gestational_age_weeks))
 
     # Evaluate prediction if glucose/bmi available
     gdm_prob = None  # no fabricated default: unknown until predicted
     gdm_level = "Low Risk"
     booking_kwargs = {}
     if "Glucoselevelblood" in maternal_update or "Body Mass Index at Booking" in maternal_update:
-        pred_res = maternal_predictor.predict_gdm_risk({
-            "AgeAtStartOfSpell": 30.0,
-            "Body Mass Index at Booking": maternal_update.get("Body Mass Index at Booking", 27.5),
-            "Glucoselevelblood": maternal_update.get("Glucoselevelblood", 5.5),
-            "Glucoselevel0minblood": maternal_update.get("Glucoselevel0minblood", 5.0),
-            "Glucoselevel120minblood": maternal_update.get("Glucoselevel120minblood", 7.5),
-            "SystolicBloodPressureCuff": maternal_update.get("SystolicBloodPressureCuff", 120.0),
-            "Diastolic Blood Pressure": maternal_update.get("Diastolic Blood Pressure", 80.0),
-            "Gestation at booking (Weeks)": data.gestational_age_weeks,
-            "Obese?": "YES" if maternal_update.get("Body Mass Index at Booking", 27.5) >= 30 else "NO"
-        })
+        # Use the patient's stored state (age, parity, ethnicity, ...) plus this update,
+        # instead of fixed placeholder values
+        model_input = {**twin.maternal_state, **maternal_update}
+        bmi_now = model_input.get("Body Mass Index at Booking")
+        if bmi_now is not None:
+            model_input["Obese?"] = "YES" if float(bmi_now) >= 30 else "NO"
+        pred_res = maternal_predictor.predict_gdm_risk(model_input)
         gdm_prob = pred_res["gdm_probability"]
         gdm_level = pred_res["risk_level"]
-        mac = maternal_predictor.predict_macrosomia_risk(maternal_update)
+        mac = maternal_predictor.predict_macrosomia_risk(model_input)
         booking_kwargs = {"macrosomia_prob": mac["macrosomia_probability"], "booking_flagged": mac["booking_flagged"]}
 
     twin.update_maternal_state(maternal_update, gdm_prob=gdm_prob)

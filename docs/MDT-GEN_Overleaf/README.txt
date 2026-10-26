@@ -1,0 +1,1 @@
+Overleaf upload: upload the entire project ZIP, or upload main.tex together with the figures/ folder. The source document referred to Fig. 1 but did not embed its image; Fig. 1 is reconstructed from the paper description. Compile with pdfLaTeX and IEEEtran (conference option).

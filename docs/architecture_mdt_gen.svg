@@ -1,0 +1,216 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="3140" viewBox="0 0 1600 3140" role="img" aria-labelledby="title desc">
+<title id="title">MDT-GEN algorithm-level workflow</title>
+<desc id="desc">Combined algorithm flow for dataset curation, booking risk prediction, fetal abdominal circumference estimation, macrosomia monitoring, digital-twin state assembly, Neural ODE, CTGAN, and SHAP.</desc>
+<defs>
+  <marker id="arrow" markerUnits="userSpaceOnUse" markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto"><path d="M0,0 L5,2.5 L0,5 z" fill="#263445"/></marker>
+  <marker id="arrowBlue" markerUnits="userSpaceOnUse" markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto"><path d="M0,0 L5,2.5 L0,5 z" fill="#1769aa"/></marker>
+  <marker id="arrowGreen" markerUnits="userSpaceOnUse" markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto"><path d="M0,0 L5,2.5 L0,5 z" fill="#16835d"/></marker>
+  <style>
+    text{font-family:Arial,Helvetica,sans-serif;fill:#182536} .title{font-size:30px;font-weight:700}.sub{font-size:16px;fill:#536273}
+    .head{font-size:20px;font-weight:700}.body{font-size:16px}.small{font-size:14px}.tiny{font-size:12px}
+    .box{stroke-width:2.2}.arr{fill:none;stroke:#263445;stroke-width:2.5;marker-end:url(#arrow)}
+    .arrb{fill:none;stroke:#1769aa;stroke-width:2.6;marker-end:url(#arrowBlue)}
+    .arrg{fill:none;stroke:#16835d;stroke-width:2.6;marker-end:url(#arrowGreen)}
+    .dash{stroke-dasharray:8 7}
+  </style>
+</defs>
+<rect width="1600" height="3140" fill="#ffffff"/>
+<text x="800" y="48" text-anchor="middle" class="title">Maternal–Fetal Digital Twin: Algorithm-Level Workflow</text>
+<text x="800" y="76" text-anchor="middle" class="sub">Dataset curation → core risk and ultrasound algorithms → separate supporting research modules</text>
+
+<!-- Dataset provenance and feature curation -->
+<rect x="35" y="100" width="1530" height="275" rx="24" fill="#edf3f8" stroke="#506b83" stroke-width="2.5"/>
+<text x="800" y="132" text-anchor="middle" class="head" fill="#344c61">0. Original cohort and how the booking predictors are defined</text>
+<rect x="75" y="150" width="1450" height="47" rx="12" fill="#fff" stroke="#506b83" class="box"/>
+<text x="800" y="180" text-anchor="middle" class="body" font-weight="700">Original maternal cohort: data/maternal/raw/GDM Dataset.xlsx</text>
+<path d="M800 197 V211" class="arr"/>
+<rect x="75" y="216" width="1450" height="63" rx="12" fill="#fff" stroke="#506b83" class="box"/>
+<text x="800" y="242" text-anchor="middle" class="small" font-weight="700">Clean and define outcomes: remove UID, 100%-missing thyroid field and duplicate LOS field; clean values, map GDM Yes/No, retain rows with known GDM outcome</text>
+<text x="800" y="266" text-anchor="middle" class="small">Fill missing booking BMI from height and weight when available; macrosomia label is birthweight ≥ 4000 g</text>
+<path d="M800 279 V293" class="arr"/>
+<rect x="75" y="298" width="1450" height="61" rx="12" fill="#fff" stroke="#506b83" class="box"/>
+<text x="800" y="324" text-anchor="middle" class="small" font-weight="700">Curated predictor rule: use variables available at early booking (configured list, not automatic feature selection in model fitting)</text>
+<text x="800" y="348" text-anchor="middle" class="small">8 static booking fields + 2 BP vitals → 10 predictors; exclude ID, diagnostic OGTT/glucose, and post-booking/delivery outcomes to avoid leakage</text>
+
+<!-- Booking risk branch -->
+<g transform="translate(0,300)">
+<rect x="35" y="105" width="740" height="710" rx="28" fill="#f5f0ff" stroke="#7539b8" stroke-width="3" stroke-dasharray="11 8"/>
+<text x="405" y="140" text-anchor="middle" class="head" fill="#54258a">A. Early-booking risk models</text>
+<rect x="100" y="165" width="610" height="153" rx="16" fill="#fff" stroke="#7539b8" class="box"/>
+<text x="405" y="193" text-anchor="middle" class="body" font-weight="700">10 booking predictors (no OGTT / glucose)</text>
+<text x="125" y="222" class="small">Age • gestational age at booking • BMI at booking • gravida • parity</text>
+<text x="125" y="247" class="small">Previous C-sections • deprivation rank • systolic BP • diastolic BP</text>
+<text x="125" y="272" class="small">Ethnicity</text>
+<text x="125" y="299" class="tiny" fill="#536273">Numeric: 9 features   |   Categorical: ethnicity</text>
+<path d="M405 318 V345" class="arr"/>
+<rect x="100" y="350" width="610" height="114" rx="14" fill="#fff" stroke="#9861cd" class="box"/>
+<text x="405" y="381" text-anchor="middle" class="body" font-weight="700">Quality checks and fold-fitted preprocessing</text>
+<text x="405" y="407" text-anchor="middle" class="small">Implausible booking GA, gravida and BP → missing</text>
+<text x="405" y="433" text-anchor="middle" class="small">Median imputation • BP missingness flags • scaling • ethnicity one-hot</text>
+<path d="M405 464 V490" class="arr"/>
+<rect x="100" y="495" width="610" height="133" rx="14" fill="#fff" stroke="#9861cd" class="box"/>
+<text x="405" y="525" text-anchor="middle" class="body" font-weight="700">For each outcome: 5-fold out-of-fold stacking</text>
+<text x="405" y="554" text-anchor="middle" class="small">Logistic Regression • Random Forest • XGBoost • CatBoost</text>
+<text x="405" y="583" text-anchor="middle" class="small">Out-of-fold base probabilities → Logistic Regression meta-learner</text>
+<text x="405" y="610" text-anchor="middle" class="tiny" fill="#536273">Models then refit on training data; held-out validation reported separately</text>
+<path d="M405 628 V654 H225 V675" class="arr"/>
+<path d="M405 654 H585 V675" class="arr"/>
+<rect x="75" y="680" width="300" height="95" rx="14" fill="#eadcf7" stroke="#7539b8" class="box"/>
+<text x="225" y="714" text-anchor="middle" class="body" font-weight="700">GDM booking model</text>
+<text x="225" y="744" text-anchor="middle" class="small">P(GDM) risk estimate</text>
+<rect x="435" y="680" width="300" height="95" rx="14" fill="#eadcf7" stroke="#7539b8" class="box"/>
+<text x="585" y="714" text-anchor="middle" class="body" font-weight="700">Macrosomia booking model</text>
+<text x="585" y="744" text-anchor="middle" class="small">P(birthweight ≥ 4000 g)</text>
+
+<!-- AC image branch -->
+<rect x="825" y="105" width="740" height="710" rx="28" fill="#eef8f3" stroke="#16835d" stroke-width="3" stroke-dasharray="11 8"/>
+<text x="1195" y="140" text-anchor="middle" class="head" fill="#126746">B. Ultrasound AC measurement</text>
+<rect x="895" y="172" width="600" height="75" rx="37" fill="#fff" stroke="#16835d" class="box"/>
+<text x="1195" y="203" text-anchor="middle" class="body" font-weight="700">2D ultrasound frame or 6-sweep ACOUSLIC-AI case</text>
+<text x="1195" y="229" text-anchor="middle" class="small">Image pixel spacing: 0.28 mm/pixel</text>
+<path d="M1195 247 V275" class="arrg"/>
+<rect x="895" y="280" width="600" height="92" rx="14" fill="#fff" stroke="#16835d" class="box"/>
+<text x="1195" y="315" text-anchor="middle" class="body" font-weight="700">Attention U-Net segmentation</text>
+<text x="1195" y="344" text-anchor="middle" class="small">Resize / normalize → probability mask → threshold and keep largest component</text>
+<path d="M1195 372 V399" class="arrg"/>
+<rect x="895" y="404" width="600" height="95" rx="14" fill="#fff" stroke="#16835d" class="box"/>
+<text x="1195" y="438" text-anchor="middle" class="body" font-weight="700">Ellipse-based circumference measurement</text>
+<text x="1195" y="468" text-anchor="middle" class="small">Fit ellipse to contour → Ramanujan perimeter × pixel scale → AC (mm/cm)</text>
+<path d="M1195 499 V526" class="arrg"/>
+<rect x="895" y="531" width="600" height="115" rx="14" fill="#fff" stroke="#16835d" class="box"/>
+<text x="1195" y="564" text-anchor="middle" class="body" font-weight="700">Frame / measurement quality handling</text>
+<text x="1195" y="592" text-anchor="middle" class="small">Sweep: select 5 highest-confidence frames → median AC per sweep</text>
+<text x="1195" y="619" text-anchor="middle" class="small">Single frame: low confidence or missing scale suppresses derived outputs</text>
+<path d="M1195 646 V673" class="arrg"/>
+<rect x="895" y="678" width="600" height="97" rx="14" fill="#d7eee3" stroke="#16835d" class="box"/>
+<text x="1195" y="711" text-anchor="middle" class="body" font-weight="700">Measured AC + confidence / plane quality</text>
+<text x="1195" y="741" text-anchor="middle" class="small">AC is a research image estimate; 0.28 mm/pixel is scale, not accuracy</text>
+
+<!-- Stage 2 assessment -->
+<rect x="35" y="855" width="1530" height="460" rx="28" fill="#fff8e9" stroke="#d18411" stroke-width="3" stroke-dasharray="11 8"/>
+<text x="800" y="892" text-anchor="middle" class="head" fill="#8d5605">C. Macrosomia monitor: booking probability + later ultrasound criterion</text>
+<path d="M585 775 V930 H450 V958" class="arr"/>
+<path d="M1195 775 V928 H1150 V958" class="arrg"/>
+<rect x="115" y="963" width="670" height="95" rx="14" fill="#fff" stroke="#d18411" class="box"/>
+<text x="450" y="998" text-anchor="middle" class="body" font-weight="700">Stage 1: booking macrosomia probability</text>
+<text x="450" y="1028" text-anchor="middle" class="small">Booking model output is pre-test probability; top 20% flag informs moderate tier</text>
+<rect x="815" y="963" width="670" height="95" rx="14" fill="#fff" stroke="#16835d" class="box"/>
+<text x="1150" y="998" text-anchor="middle" class="body" font-weight="700">Stage 2: only apply published criterion at GA ≥ 36 weeks</text>
+<text x="1150" y="1028" text-anchor="middle" class="small">If AC and HC/BPD/FL available: Hadlock EFW ≥ 4000 g; otherwise AC ≥ 36 cm</text>
+<text x="1150" y="1048" text-anchor="middle" class="tiny" fill="#536273">One criterion only; no multiplication of correlated AC and EFW likelihood ratios</text>
+<path d="M450 1058 V1093 H650" class="arr"/>
+<path d="M1150 1058 V1093 H950" class="arrg"/>
+<rect x="500" y="1098" width="600" height="83" rx="14" fill="#fff0c7" stroke="#d18411" class="box"/>
+<text x="800" y="1132" text-anchor="middle" class="body" font-weight="700">If Stage 2 applies: Bayesian odds update</text>
+<text x="800" y="1159" text-anchor="middle" class="small">Pre-test odds × published LR → post-test probability</text>
+<path d="M800 1181 V1205" class="arr"/>
+<rect x="180" y="1210" width="1240" height="72" rx="14" fill="#ffe4b5" stroke="#d18411" class="box"/>
+<text x="800" y="1240" text-anchor="middle" class="body" font-weight="700">Output: macrosomia tier + probability/context</text>
+<text x="800" y="1265" text-anchor="middle" class="small">High: criterion positive • Moderate: booking flag only • Low: neither • before 36 weeks: AC context only</text>
+<text x="800" y="1303" text-anchor="middle" class="tiny" fill="#7b4d08">Combined Stage 1 + Stage 2 probability is not validated on linked booking–scan–birthweight records in this project.</text>
+
+<!-- State vector -->
+<rect x="35" y="1350" width="1530" height="350" rx="28" fill="#f2f5f8" stroke="#6c7783" stroke-width="3" stroke-dasharray="11 8"/>
+<text x="800" y="1388" text-anchor="middle" class="head">D. Available values for digital-twin state assembly</text>
+<rect x="95" y="1450" width="430" height="105" rx="14" fill="#eadcf7" stroke="#7539b8" class="box"/>
+<text x="310" y="1485" text-anchor="middle" class="body" font-weight="700">Maternal branch</text>
+<text x="310" y="1515" text-anchor="middle" class="small">Booking predictors + GDM / booking macrosomia risks</text>
+<rect x="585" y="1450" width="430" height="105" rx="14" fill="#d7eee3" stroke="#16835d" class="box"/>
+<text x="800" y="1485" text-anchor="middle" class="body" font-weight="700">Fetal branch</text>
+<text x="800" y="1515" text-anchor="middle" class="small">AC, EFW when available, confidence / quality, gestational age</text>
+<rect x="1075" y="1450" width="430" height="105" rx="14" fill="#ffe4b5" stroke="#d18411" class="box"/>
+<text x="1290" y="1485" text-anchor="middle" class="body" font-weight="700">Risk / monitoring branch</text>
+<text x="1290" y="1515" text-anchor="middle" class="small">Macrosomia monitor result and available history</text>
+<path d="M310 1555 V1580 H600 V1593" class="arr"/><path d="M800 1555 V1593" class="arrg"/><path d="M1290 1555 V1580 H1000 V1593" class="arr"/>
+<rect x="390" y="1595" width="820" height="70" rx="14" fill="#fff" stroke="#596775" class="box"/>
+<text x="800" y="1625" text-anchor="middle" class="body" font-weight="700">Fused feature state for display / storage</text>
+<text x="800" y="1652" text-anchor="middle" class="small">Future use: a validated cross-modal model could combine these signals when linked data are available</text>
+<text x="800" y="1728" text-anchor="middle" class="tiny" fill="#536273">OGTT / glucose values are excluded from booking predictors and the fused maternal feature vector.</text>
+</g>
+
+<!-- Separate supporting algorithms -->
+<text x="800" y="2075" text-anchor="middle" class="head">Separate supporting research algorithms</text>
+<text x="800" y="2101" text-anchor="middle" class="sub">These branches are not inputs to the core prediction flow above unless explicitly shown in the project</text>
+
+<!-- Neural ODE card -->
+<rect x="35" y="2120" width="490" height="900" rx="24" fill="#eef5ff" stroke="#3c78b5" stroke-width="2.5" stroke-dasharray="9 7"/>
+<text x="280" y="2155" text-anchor="middle" class="head" fill="#285d91">Neural ODE</text>
+<rect x="65" y="2175" width="430" height="102" rx="12" fill="#fff" stroke="#3c78b5" class="box"/>
+<text x="280" y="2206" text-anchor="middle" class="body" font-weight="700">Input: baseline booking predictors</text>
+<text x="280" y="2234" text-anchor="middle" class="small">9 numeric + one-hot ethnicity;</text>
+<text x="280" y="2258" text-anchor="middle" class="small">diagnostic OGTT glucose excluded</text>
+<path d="M280 2277 V2297" class="arr"/>
+<rect x="65" y="2302" width="430" height="105" rx="12" fill="#fff" stroke="#3c78b5" class="box"/>
+<text x="280" y="2334" text-anchor="middle" class="body" font-weight="700">Encode baseline and initialize state</text>
+<text x="280" y="2363" text-anchor="middle" class="small">Latent context h + z₀:</text>
+<text x="280" y="2387" text-anchor="middle" class="small">glucose, BMI, systolic BP</text>
+<path d="M280 2407 V2427" class="arr"/>
+<rect x="65" y="2432" width="430" height="108" rx="12" fill="#fff" stroke="#3c78b5" class="box"/>
+<text x="280" y="2464" text-anchor="middle" class="body" font-weight="700">Time-conditioned derivative</text>
+<text x="280" y="2493" text-anchor="middle" class="small">dz/dt = f(z, t, h), with bounded</text>
+<text x="280" y="2517" text-anchor="middle" class="small">rates for all three state variables</text>
+<path d="M280 2540 V2560" class="arr"/>
+<rect x="65" y="2565" width="430" height="100" rx="12" fill="#fff" stroke="#3c78b5" class="box"/>
+<text x="280" y="2598" text-anchor="middle" class="body" font-weight="700">RK4 numerical integration</text>
+<text x="280" y="2628" text-anchor="middle" class="small">Produces glucose, BMI and SBP</text>
+<text x="280" y="2652" text-anchor="middle" class="small">trajectories over gestational time</text>
+<rect x="65" y="2690" width="430" height="150" rx="12" fill="#fff0cf" stroke="#c77b00" class="box"/>
+<text x="280" y="2722" text-anchor="middle" class="body" font-weight="700">Illustrative only</text>
+<text x="280" y="2752" text-anchor="middle" class="small">Cohort lacks repeated longitudinal</text>
+<text x="280" y="2776" text-anchor="middle" class="small">measurements; held-out trajectory</text>
+<text x="280" y="2800" text-anchor="middle" class="small">performance was poor. Not a validated</text>
+<text x="280" y="2824" text-anchor="middle" class="small">forecast or GDM risk output.</text>
+
+<!-- CTGAN card -->
+<rect x="555" y="2120" width="490" height="900" rx="24" fill="#f4efff" stroke="#7542b5" stroke-width="2.5" stroke-dasharray="9 7"/>
+<text x="800" y="2155" text-anchor="middle" class="head" fill="#592d8e">CTGAN synthetic cohort</text>
+<rect x="585" y="2175" width="430" height="102" rx="12" fill="#fff" stroke="#7542b5" class="box"/>
+<text x="800" y="2206" text-anchor="middle" class="body" font-weight="700">Input: processed training table</text>
+<text x="800" y="2234" text-anchor="middle" class="small">Configured early-booking predictors</text>
+<text x="800" y="2258" text-anchor="middle" class="small">plus configured target; missing-value fill</text>
+<path d="M800 2277 V2297" class="arr"/>
+<rect x="585" y="2302" width="430" height="105" rx="12" fill="#fff" stroke="#7542b5" class="box"/>
+<text x="800" y="2334" text-anchor="middle" class="body" font-weight="700">Fit CTGAN to mixed columns</text>
+<text x="800" y="2363" text-anchor="middle" class="small">If unavailable, bootstrap existing rows</text>
+<text x="800" y="2387" text-anchor="middle" class="small">with small numeric noise</text>
+<path d="M800 2407 V2427" class="arr"/>
+<rect x="585" y="2432" width="430" height="108" rx="12" fill="#fff" stroke="#7542b5" class="box"/>
+<text x="800" y="2464" text-anchor="middle" class="body" font-weight="700">Sample synthetic profiles</text>
+<text x="800" y="2493" text-anchor="middle" class="small">Apply plausibility bounds to selected</text>
+<text x="800" y="2517" text-anchor="middle" class="small">maternal fields</text>
+<path d="M800 2540 V2560" class="arr"/>
+<rect x="585" y="2565" width="430" height="145" rx="12" fill="#fff" stroke="#7542b5" class="box"/>
+<text x="800" y="2598" text-anchor="middle" class="body" font-weight="700">Evaluate synthetic data</text>
+<text x="800" y="2628" text-anchor="middle" class="small">Wasserstein / JS distances • correlation</text>
+<text x="800" y="2652" text-anchor="middle" class="small">MAE • TSTR vs TRTR • nearest-neighbor</text>
+<text x="800" y="2676" text-anchor="middle" class="small">memorization check</text>
+<rect x="585" y="2735" width="430" height="105" rx="12" fill="#fff0cf" stroke="#c77b00" class="box"/>
+<text x="800" y="2768" text-anchor="middle" class="body" font-weight="700">Separate research output</text>
+<text x="800" y="2797" text-anchor="middle" class="small">Not a formal privacy guarantee and</text>
+<text x="800" y="2821" text-anchor="middle" class="small">not automatically fed into risk models</text>
+
+<!-- SHAP card -->
+<rect x="1075" y="2120" width="490" height="900" rx="24" fill="#fff4ee" stroke="#d56a39" stroke-width="2.5" stroke-dasharray="9 7"/>
+<text x="1320" y="2155" text-anchor="middle" class="head" fill="#9c4825">Booking-model SHAP</text>
+<rect x="1105" y="2175" width="430" height="102" rx="12" fill="#fff" stroke="#d56a39" class="box"/>
+<text x="1320" y="2206" text-anchor="middle" class="body" font-weight="700">Input: validated booking model</text>
+<text x="1320" y="2234" text-anchor="middle" class="small">and one patient’s booking predictors</text>
+<text x="1320" y="2258" text-anchor="middle" class="small">for GDM or macrosomia branch</text>
+<path d="M1320 2277 V2297" class="arr"/>
+<rect x="1105" y="2302" width="430" height="105" rx="12" fill="#fff" stroke="#d56a39" class="box"/>
+<text x="1320" y="2334" text-anchor="middle" class="body" font-weight="700">CatBoost base learner</text>
+<text x="1320" y="2363" text-anchor="middle" class="small">TreeExplainer computes per-feature</text>
+<text x="1320" y="2387" text-anchor="middle" class="small">contributions in log-odds space</text>
+<path d="M1320 2407 V2427" class="arr"/>
+<rect x="1105" y="2432" width="430" height="108" rx="12" fill="#fff" stroke="#d56a39" class="box"/>
+<text x="1320" y="2464" text-anchor="middle" class="body" font-weight="700">Rank contribution magnitudes</text>
+<text x="1320" y="2493" text-anchor="middle" class="small">Return top features and direction</text>
+<text x="1320" y="2517" text-anchor="middle" class="small">of contribution</text>
+<rect x="1105" y="2565" width="430" height="145" rx="12" fill="#fff0cf" stroke="#c77b00" class="box"/>
+<text x="1320" y="2598" text-anchor="middle" class="body" font-weight="700">Interpretation boundary</text>
+<text x="1320" y="2628" text-anchor="middle" class="small">This explains CatBoost, one input to</text>
+<text x="1320" y="2652" text-anchor="middle" class="small">the stacking meta-learner; it does not</text>
+<text x="1320" y="2676" text-anchor="middle" class="small">explain the final stacked probability</text>
+
+<text x="800" y="3075" text-anchor="middle" class="tiny" fill="#536273">Neural ODE, CTGAN and SHAP are separate modules, not one combined prediction model.</text>
+</svg>

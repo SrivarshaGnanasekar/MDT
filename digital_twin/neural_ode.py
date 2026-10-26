@@ -905,6 +905,17 @@ class FetalMaternalODEPredictor:
 
         return np.concatenate([scaled_num, eth_vec])
 
+    @staticmethod
+    def _first_number(*values: Any, default: Optional[float] = None) -> Optional[float]:
+        """First value that is a usable number (lab fields may be blank/None when not measured)."""
+        for v in values:
+            try:
+                if v is not None and v != "" and np.isfinite(float(v)):
+                    return float(v)
+            except (TypeError, ValueError):
+                continue
+        return default
+
     def predict_trajectory(
         self,
         maternal_profile: Dict[str, Any],
@@ -929,9 +940,9 @@ class FetalMaternalODEPredictor:
             except Exception as e:
                 logger.error(f"Neural ODE training fallback failed: {e}")
                 weeks = np.array(irregular_visits) if irregular_visits else np.arange(12, 41)
-                bmi_val = float(maternal_profile.get("Body Mass Index at Booking", maternal_profile.get("BMI", 26.0)))
-                glu_val = float(maternal_profile.get("Glucoselevel0minblood", maternal_profile.get("Glucoselevelblood", 4.8)))
-                sbp_val = float(maternal_profile.get("SystolicBloodPressureCuff", maternal_profile.get("Systolic BP", 118.0)))
+                bmi_val = self._first_number(maternal_profile.get("Body Mass Index at Booking"), maternal_profile.get("BMI"), default=26.0)
+                glu_val = self._first_number(maternal_profile.get("Glucoselevel0minblood"), maternal_profile.get("Glucoselevelblood"), default=4.8)
+                sbp_val = self._first_number(maternal_profile.get("SystolicBloodPressureCuff"), maternal_profile.get("Systolic BP"), default=118.0)
                 return pd.DataFrame({
                     "gestational_week": weeks,
                     "glucose_level": glu_val + 0.03 * (weeks - 12),
@@ -944,13 +955,15 @@ class FetalMaternalODEPredictor:
         if vitals_history:
             for v in vitals_history:
                 ga = v.get("gestational_age_weeks")
-                if ga is not None and np.isfinite(ga) and 10.0 <= float(ga) <= 42.0:
+                ga = self._first_number(ga)
+                if ga is not None and 10.0 <= ga <= 42.0:
                     ga_key = round(float(ga), 1)
                     valid_visits[ga_key] = {
                         "ga": ga_key,
-                        "glucose": float(v.get("glucose_0min", v.get("glucose_blood", 4.8))),
-                        "bmi": float(v.get("bmi", 26.0)) if v.get("bmi") else None,
-                        "sbp": float(v.get("systolic_bp", 118.0)) if v.get("systolic_bp") else None
+                        # glucose may be blank when no lab test was done at this visit
+                        "glucose": self._first_number(v.get("glucose_0min"), v.get("glucose_blood")),
+                        "bmi": self._first_number(v.get("bmi")),
+                        "sbp": self._first_number(v.get("systolic_bp"))
                     }
 
         if valid_visits:
@@ -1023,15 +1036,15 @@ class FetalMaternalODEPredictor:
             booking_ga = float(maternal_profile.get("Gestation at booking (Weeks)", maternal_profile.get("Booking GA", 12.0)))
             idx_book = int(np.abs(df_traj["gestational_week"].values - booking_ga).argmin())
 
-            obs_glu = maternal_profile.get("Glucoselevel0minblood", maternal_profile.get("Glucoselevelblood", maternal_profile.get("Fasting Glucose", None)))
+            obs_glu = self._first_number(maternal_profile.get("Glucoselevel0minblood"), maternal_profile.get("Glucoselevelblood"), maternal_profile.get("Fasting Glucose"))
             if obs_glu is not None:
                 df_traj["glucose_level"] += float(obs_glu) - df_traj.loc[idx_book, "glucose_level"]
 
-            obs_bmi = maternal_profile.get("Body Mass Index at Booking", maternal_profile.get("BMI", None))
+            obs_bmi = self._first_number(maternal_profile.get("Body Mass Index at Booking"), maternal_profile.get("BMI"))
             if obs_bmi is not None:
                 df_traj["bmi"] += float(obs_bmi) - df_traj.loc[idx_book, "bmi"]
 
-            obs_sbp = maternal_profile.get("SystolicBloodPressureCuff", maternal_profile.get("Systolic BP", None))
+            obs_sbp = self._first_number(maternal_profile.get("SystolicBloodPressureCuff"), maternal_profile.get("Systolic BP"))
             if obs_sbp is not None:
                 df_traj["systolic_bp"] += float(obs_sbp) - df_traj.loc[idx_book, "systolic_bp"]
 

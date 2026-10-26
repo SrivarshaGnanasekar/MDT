@@ -643,6 +643,128 @@ def booking_macro_kwargs(maternal: Dict[str, Any]) -> Dict[str, Any]:
     return {"macrosomia_prob": r["macrosomia_probability"], "booking_flagged": r["booking_flagged"]}
 
 
+def derive_booking_and_current_ga(history: List[Dict[str, Any]], fallback_booking: float, fallback_current: float) -> Tuple[float, float]:
+    """Booking GA is fixed at the first (booking) visit; the current week comes from the latest visit.
+
+    The booking models were trained on gestational age AT BOOKING, so later visits must not overwrite it.
+    Older records without ``booking_ga_weeks`` fall back to the first visit's gestational week.
+    """
+    if not history:
+        return float(fallback_booking), float(fallback_current)
+    first, latest = history[0], history[-1]
+    booking = first.get("gestational_age_weeks") if first.get("gestational_age_weeks") is not None else fallback_booking
+    for rec in history:  # an explicitly recorded booking GA anywhere in the history wins
+        if rec.get("booking_ga_weeks") is not None:
+            booking = rec["booking_ga_weeks"]
+            break
+    current = latest.get("gestational_age_weeks") if latest.get("gestational_age_weeks") is not None else fallback_current
+    booking, current = float(booking), float(current)
+    return min(booking, current), current
+
+
+BOOKING_VITAL_FIELDS = {  # model key -> (explicit booking field, per-visit field)
+    "Body Mass Index at Booking": ("booking_bmi", "bmi"),
+    "SystolicBloodPressureCuff": ("booking_sbp", "systolic_bp"),
+    "Diastolic Blood Pressure": ("booking_dbp", "diastolic_bp"),
+}
+
+
+def derive_booking_vitals(history: List[Dict[str, Any]], fallback: Dict[str, Any]) -> Dict[str, Any]:
+    """Booking BMI and blood pressure come from the booking visit, not the latest visit.
+
+    BMI and BP change during pregnancy; the booking models were trained on values AT BOOKING,
+    so later observations must not overwrite them. Uses an explicitly recorded booking value if
+    present, otherwise the first visit's value, otherwise the fallback.
+    """
+    out = {}
+    for key, (booking_field, visit_field) in BOOKING_VITAL_FIELDS.items():
+        val = None
+        for rec in history:
+            if rec.get(booking_field) is not None:
+                val = rec[booking_field]
+                break
+        if val is None and history and history[0].get(visit_field) is not None:
+            val = history[0][visit_field]
+        out[key] = val if val is not None else fallback.get(key)
+    return out
+
+
+# NICE NG3 (2015, updated 2020) diagnostic thresholds for GDM on a 75 g OGTT
+NICE_OGTT_FASTING_MMOL = 5.6
+NICE_OGTT_2H_MMOL = 7.8
+
+
+def _num(value: Any, default: Optional[float] = None) -> Optional[float]:
+    """float(value), or default when the value is missing/blank."""
+    try:
+        return float(value) if value is not None and value != "" else default
+    except (TypeError, ValueError):
+        return default
+
+
+def ogtt_diagnosis(fasting: Optional[float], two_hour: Optional[float]) -> Dict[str, Any]:
+    """Classify an OGTT against NICE NG3 (fasting >= 5.6 or 2-hour >= 7.8 mmol/L = GDM).
+
+    This is the diagnostic test itself, so it is reported as a diagnosis, never fed to the
+    booking risk models.
+    """
+    if fasting is None and two_hour is None:
+        return {"status": "not_done", "label": "No OGTT recorded", "diagnosed": None}
+    hits = []
+    if fasting is not None and fasting >= NICE_OGTT_FASTING_MMOL:
+        hits.append(f"fasting {fasting:.1f} ≥ {NICE_OGTT_FASTING_MMOL}")
+    if two_hour is not None and two_hour >= NICE_OGTT_2H_MMOL:
+        hits.append(f"2-hour {two_hour:.1f} ≥ {NICE_OGTT_2H_MMOL}")
+    if hits:
+        return {"status": "diagnosed", "label": "GDM diagnosed (OGTT)", "diagnosed": True, "reason": "; ".join(hits)}
+    if fasting is not None and two_hour is not None:
+        return {"status": "normal", "label": "OGTT normal", "diagnosed": False}
+    return {"status": "incomplete", "label": "OGTT incomplete", "diagnosed": None}
+
+
+def latest_ogtt_result(history: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Most recent OGTT that was actually entered (records flagged ``ogtt_recorded``).
+
+    Older records stored placeholder glucose values whether or not a test was done,
+    so they are not used for diagnosis.
+    """
+    for rec in reversed(history or []):
+        if not rec.get("ogtt_recorded"):
+            continue
+        f0, f120 = _num(rec.get("glucose_0min")), _num(rec.get("glucose_120min"))
+        if f0 is None and f120 is None:
+            continue
+        res = ogtt_diagnosis(f0, f120)
+        res.update({"fasting": f0, "two_hour": f120, "week": _num(rec.get("gestational_age_weeks"))})
+        return res
+    res = ogtt_diagnosis(None, None)
+    res.update({"fasting": None, "two_hour": None, "week": None})
+    return res
+
+
+def render_ogtt_status(ogtt: Optional[Dict[str, Any]]) -> None:
+    """Show OGTT diagnosis next to (not instead of) the booking screening risk."""
+    ogtt = ogtt or latest_ogtt_result([])
+    wk = f" at {ogtt['week']:.0f} wk" if ogtt.get("week") is not None else ""
+    vals = []
+    if ogtt.get("fasting") is not None:
+        vals.append(f"fasting {ogtt['fasting']:.1f}")
+    if ogtt.get("two_hour") is not None:
+        vals.append(f"2-hour {ogtt['two_hour']:.1f}")
+    vals_txt = f" ({', '.join(vals)} mmol/L)" if vals else ""
+    rule = f"NICE NG3: fasting ≥ {NICE_OGTT_FASTING_MMOL} or 2-hour ≥ {NICE_OGTT_2H_MMOL} mmol/L"
+    if ogtt["status"] == "diagnosed":
+        st.error(f"**GDM diagnosed by OGTT{wk}**{vals_txt} — {ogtt.get('reason', '')}. {rule}. "
+                 "The booking risk is now superseded by the diagnosis; follow the GDM care pathway.")
+    elif ogtt["status"] == "normal":
+        st.success(f"**OGTT normal{wk}**{vals_txt}. {rule}. The booking risk remains a screening estimate only.")
+    elif ogtt["status"] == "incomplete":
+        st.warning(f"**OGTT incomplete{wk}**{vals_txt}: one value is missing and the recorded value is below the threshold. {rule}.")
+    else:
+        st.info("**No OGTT recorded yet.** NICE offers a 75 g OGTT at 24–28 weeks to women with risk factors. "
+                "The booking risk helps decide who to test early.")
+
+
 def validated_caption(res: Dict[str, Any], outcome_label: str) -> str:
     """One-line evidence context shown under every booking-model probability."""
     vp = res.get("validated_performance", {})
@@ -673,17 +795,27 @@ def sync_maternal_inputs_from_latest_observation() -> None:
             "Parity": int(latest_observation.get("parity", st.session_state.maternal_inputs.get("Parity", 0))),
             "No_Of_previous_Csections": int(latest_observation.get("csections", st.session_state.maternal_inputs.get("No_Of_previous_Csections", 0))),
             "Index of Multiple Deprivation Rank": int(latest_observation.get("imdr", st.session_state.maternal_inputs.get("Index of Multiple Deprivation Rank", 12183))),
-            "Body Mass Index at Booking": float(latest_observation.get("bmi", st.session_state.maternal_inputs.get("Body Mass Index at Booking", 29.4))),
-            "Glucoselevelblood": float(latest_observation.get("glucose_blood", st.session_state.maternal_inputs.get("Glucoselevelblood", 6.3))),
-            "Glucoselevel0minblood": float(latest_observation.get("glucose_0min", st.session_state.maternal_inputs.get("Glucoselevel0minblood", 5.2))),
-            "Glucoselevel120minblood": float(latest_observation.get("glucose_120min", st.session_state.maternal_inputs.get("Glucoselevel120minblood", 8.1))),
-            "SystolicBloodPressureCuff": int(latest_observation.get("systolic_bp", st.session_state.maternal_inputs.get("SystolicBloodPressureCuff", 125))),
-            "Diastolic Blood Pressure": int(latest_observation.get("diastolic_bp", st.session_state.maternal_inputs.get("Diastolic Blood Pressure", 82))),
-            "Gestation at booking (Weeks)": float(latest_observation.get("gestational_age_weeks", st.session_state.maternal_inputs.get("Gestation at booking (Weeks)", 24))),
+            "Glucoselevelblood": _num(latest_observation.get("glucose_blood"), st.session_state.maternal_inputs.get("Glucoselevelblood", 6.3)),
+            "Glucoselevel0minblood": _num(latest_observation.get("glucose_0min"), st.session_state.maternal_inputs.get("Glucoselevel0minblood", 5.2)),
+            "Glucoselevel120minblood": _num(latest_observation.get("glucose_120min"), st.session_state.maternal_inputs.get("Glucoselevel120minblood", 8.1)),
             "Ethnicity": str(latest_observation.get("ethnicity", st.session_state.maternal_inputs.get("Ethnicity", "WEU"))).upper(),
-            "Obese?": "YES" if float(latest_observation.get("bmi", 29.4)) >= 30.0 else "NO"
         })
 
+    booking_ga, current_ga = derive_booking_and_current_ga(
+        vitals_history,
+        st.session_state.maternal_inputs.get("Gestation at booking (Weeks)", 12),
+        st.session_state.get("current_ga_weeks", 24),
+    )
+    st.session_state.maternal_inputs["Gestation at booking (Weeks)"] = booking_ga
+    booking_vitals = derive_booking_vitals(vitals_history, st.session_state.maternal_inputs)
+    st.session_state.maternal_inputs.update({
+        "Body Mass Index at Booking": float(booking_vitals["Body Mass Index at Booking"]),
+        "SystolicBloodPressureCuff": int(booking_vitals["SystolicBloodPressureCuff"]),
+        "Diastolic Blood Pressure": int(booking_vitals["Diastolic Blood Pressure"]),
+    })
+    st.session_state.maternal_inputs["Obese?"] = "YES" if st.session_state.maternal_inputs["Body Mass Index at Booking"] >= 30.0 else "NO"
+    st.session_state.current_ga_weeks = current_ga
+    st.session_state.ogtt_result = latest_ogtt_result(vitals_history)
     st.session_state.maternal_inputs_patient_id = patient_id
 
 # Initialize Global Session State
@@ -699,7 +831,7 @@ if "patient_id" not in st.session_state:
 if "maternal_inputs" not in st.session_state:
     st.session_state.maternal_inputs = {
         "AgeAtStartOfSpell": 31,
-        "Gestation at booking (Weeks)": 24,
+        "Gestation at booking (Weeks)": 12,
         "Body Mass Index at Booking": 29.4,
         "Gravida": 1,
         "Parity": 0,
@@ -713,6 +845,9 @@ if "maternal_inputs" not in st.session_state:
         "Ethnicity": "WEU",
         "Obese?": "YES"
     }
+
+if "current_ga_weeks" not in st.session_state:
+    st.session_state.current_ga_weeks = 24.0  # current gestational week (separate from booking GA)
 
 sync_maternal_inputs_from_latest_observation()
 
@@ -730,7 +865,7 @@ if "current_fetal_mask" not in st.session_state or st.session_state.current_feta
         if sample_img_cand.exists():
             import cv2
             img_init = cv2.imread(str(sample_img_cand), cv2.IMREAD_GRAYSCALE)
-            ga_init = float(st.session_state.maternal_inputs.get("Gestation at booking (Weeks)", 28.0))
+            ga_init = float(st.session_state.get("current_ga_weeks", 28.0))
             res = fet_pred.predict(img_init, pixel_spacing_mm=0.28, gestational_age_weeks=ga_init)
             
             st.session_state.current_fetal_img = img_init
@@ -1100,13 +1235,15 @@ elif nav_option == "Patient Portal & Real-Time Tracking":
     vitals_hist = get_vitals_history(st.session_state.patient_id)
 
     current_inputs = st.session_state.maternal_inputs
+    _latest_obs = st.session_state.get("latest_observation") or {}
     st.markdown('<h2 class="page-title">Patient Portal</h2><p class="page-subtitle">Record observations and review the latest clinical indicators.</p>', unsafe_allow_html=True)
     kpi_cols = st.columns(4)
     kpis = [
-        ("Gestational age", f"{current_inputs.get('Gestation at booking (Weeks)', 24):.0f}", "weeks"),
-        ("Blood glucose", f"{current_inputs.get('Glucoselevelblood', 5.9):.2f}", "mmol/L"),
-        ("Systolic blood pressure", f"{current_inputs.get('SystolicBloodPressureCuff', 124):.0f}", "mmHg"),
-        ("Body mass index", f"{current_inputs.get('Body Mass Index at Booking', 28.4):.2f}", "kg/m²")
+        ("Current gestational week", f"{st.session_state.get('current_ga_weeks', 24):.0f}", f"weeks (booked at {current_inputs.get('Gestation at booking (Weeks)', 12):.0f})"),
+        ("OGTT (diagnostic)", {"diagnosed": "GDM", "normal": "Normal", "incomplete": "Incomplete"}.get((st.session_state.get("ogtt_result") or {}).get("status"), "Not done"),
+         f"NICE NG3: fasting ≥ {NICE_OGTT_FASTING_MMOL} / 2-h ≥ {NICE_OGTT_2H_MMOL}"),
+        ("Systolic BP (latest visit)", f"{float(_latest_obs.get('systolic_bp') or current_inputs.get('SystolicBloodPressureCuff', 124)):.0f}", f"mmHg (booking {current_inputs.get('SystolicBloodPressureCuff', 124):.0f})"),
+        ("BMI (latest visit)", f"{float(_latest_obs.get('bmi') or current_inputs.get('Body Mass Index at Booking', 28.4)):.1f}", f"kg/m² (booking {current_inputs.get('Body Mass Index at Booking', 28.4):.1f})")
     ]
     for kpi_col, (label, value, unit) in zip(kpi_cols, kpis):
         with kpi_col:
@@ -1124,33 +1261,58 @@ elif nav_option == "Patient Portal & Real-Time Tracking":
             with f_col1:
                 st.caption(" Demographic & Obstetric History")
                 v_age = st.number_input("Maternal Age (years)", min_value=15, max_value=55, value=int(current_inputs.get("AgeAtStartOfSpell", 31)), step=1)
-                v_ga = st.number_input("Gestational Week", min_value=6.0, max_value=42.0, value=float(current_inputs.get("Gestation at booking (Weeks)", 24)), step=1.0)
+                v_booking_ga = st.number_input("Gestational age at booking (weeks)", min_value=4.0, max_value=42.0,
+                                               value=float(current_inputs.get("Gestation at booking (Weeks)", 12)), step=1.0,
+                                               help="Week of the first antenatal (booking) visit. Used by the booking risk models; it should not change at later visits.")
+                v_ga = st.number_input("Current gestational week", min_value=4.0, max_value=42.0,
+                                       value=float(st.session_state.get("current_ga_weeks", 24)), step=1.0,
+                                       help="Week of this observation. Used for the visit timeline and the ultrasound stage, not by the booking models.")
                 v_gravida = st.number_input("Gravida (Total Pregnancies)", min_value=1, max_value=15, value=int(current_inputs.get("Gravida", 1)), step=1)
                 v_parity = st.number_input("Parity (Prior Live Births)", min_value=0, max_value=15, value=int(current_inputs.get("Parity", 0)), step=1)
                 v_csections = st.number_input("Previous C-Sections", min_value=0, max_value=10, value=int(current_inputs.get("No_Of_previous_Csections", 0)), step=1)
+                st.caption(" Booking measurements (used by the risk models; keep the values from the booking visit)")
+                v_booking_bmi = st.number_input("BMI at booking (kg/m²)", min_value=15.0, max_value=55.0, value=float(current_inputs.get("Body Mass Index at Booking", 28.4)), step=0.1)
+                v_booking_sys = st.number_input("Systolic BP at booking (mmHg)", min_value=70, max_value=220, value=int(current_inputs.get("SystolicBloodPressureCuff", 124)), step=1)
+                v_booking_dia = st.number_input("Diastolic BP at booking (mmHg)", min_value=40, max_value=140, value=int(current_inputs.get("Diastolic Blood Pressure", 82)), step=1)
                 v_imdr = st.number_input("Index of Multiple Deprivation Rank (IMDR)", min_value=1, max_value=35000, value=int(current_inputs.get("Index of Multiple Deprivation Rank", 12183)), step=100)
                 eth_cohort_list = ["WEU", "GBR", "OTH", "NAF", "MEA", "IND", "CAR", "PAK", "IRL", "BGD", "CAE", "AFE", "ASE"]
                 curr_eth_val = str(current_inputs.get("Ethnicity", "WEU")).upper()
                 v_ethnicity = st.selectbox("Ethnicity (NHS Cohort)", eth_cohort_list, index=eth_cohort_list.index(curr_eth_val) if curr_eth_val in eth_cohort_list else 0)
 
             with f_col2:
-                st.caption(" Vitals, Anthropometrics & Glycemic Panel")
-                v_bmi = st.number_input("Body Mass Index (BMI)", min_value=15.0, max_value=55.0, value=float(current_inputs.get("Body Mass Index at Booking", 28.4)), step=0.1)
-                v_weight = st.number_input("Current Weight (kg)", min_value=40.0, max_value=150.0, value=float(st.session_state.get("latest_observation", {}).get("weight_kg", 72.5)), step=0.1)
-                v_sys = st.number_input("Systolic BP (mmHg)", min_value=70, max_value=220, value=int(current_inputs.get("SystolicBloodPressureCuff", 124)), step=1)
-                v_dia = st.number_input("Diastolic BP (mmHg)", min_value=40, max_value=140, value=int(current_inputs.get("Diastolic Blood Pressure", 82)), step=1)
-                v_glu = st.number_input("Blood Glucose (mmol/L)", min_value=2.0, max_value=25.0, value=float(current_inputs.get("Glucoselevelblood", 5.9)), step=0.1)
-                v_ogtt0 = st.number_input("Fasting OGTT 0 min (mmol/L)", min_value=2.0, max_value=15.0, value=float(current_inputs.get("Glucoselevel0minblood", 5.2)), step=0.1)
-                v_ogtt120 = st.number_input("120-min OGTT (mmol/L)", min_value=3.0, max_value=25.0, value=float(current_inputs.get("Glucoselevel120minblood", 8.2)), step=0.1)
+                st.caption(" Today's vitals (tracked over time; not used by the booking models)")
+                v_bmi = st.number_input("BMI today (kg/m²)", min_value=15.0, max_value=55.0, value=float(_latest_obs.get("bmi") or current_inputs.get("Body Mass Index at Booking", 28.4)), step=0.1)
+                v_weight = st.number_input("Current Weight (kg)", min_value=40.0, max_value=150.0, value=float(_num((st.session_state.get("latest_observation") or {}).get("weight_kg"), 72.5)), step=0.1)
+                v_sys = st.number_input("Systolic BP today (mmHg)", min_value=70, max_value=220, value=int(_latest_obs.get("systolic_bp") or current_inputs.get("SystolicBloodPressureCuff", 124)), step=1)
+                v_dia = st.number_input("Diastolic BP today (mmHg)", min_value=40, max_value=140, value=int(_latest_obs.get("diastolic_bp") or current_inputs.get("Diastolic Blood Pressure", 82)), step=1)
+
+            st.markdown("##### Lab results (optional)")
+            st.caption("Recorded for the clinical record and the OGTT diagnosis. **Not used by the risk models**, because the OGTT is the "
+                       "test that diagnoses GDM. Leave blank if not measured at this visit.")
+            l_col1, l_col2, l_col3 = st.columns(3)
+            with l_col1:
+                v_glu = st.number_input("Random blood glucose (mmol/L)", min_value=2.0, max_value=25.0, value=None, step=0.1, placeholder="not measured")
+            with l_col2:
+                v_ogtt0 = st.number_input("OGTT fasting, 0 min (mmol/L)", min_value=2.0, max_value=15.0, value=None, step=0.1, placeholder="not done")
+            with l_col3:
+                v_ogtt120 = st.number_input("OGTT 2-hour, 120 min (mmol/L)", min_value=2.0, max_value=25.0, value=None, step=0.1, placeholder="not done")
 
             v_notes = st.text_area("Clinical Observations & Patient Symptoms", placeholder="e.g. Patient reports mild fatigue; fasting glucose controlled.")
             
             submit_vital = st.form_submit_button("Save Observation", use_container_width=True)
 
         if submit_vital:
+            if v_booking_ga > v_ga:
+                st.warning(f"Booking GA ({v_booking_ga:.0f} wk) was later than the current week ({v_ga:.0f} wk); booking GA set to {v_ga:.0f} wk.")
+                v_booking_ga = v_ga
             vital_payload = {
                 "maternal_age": v_age,
                 "gestational_age_weeks": v_ga,
+                "booking_ga_weeks": v_booking_ga,
+                "booking_bmi": v_booking_bmi,
+                "booking_sbp": v_booking_sys,
+                "booking_dbp": v_booking_dia,
+                "ogtt_recorded": bool(v_ogtt0 is not None or v_ogtt120 is not None),
                 "gravida": v_gravida,
                 "parity": v_parity,
                 "csections": v_csections,
@@ -1172,21 +1334,28 @@ elif nav_option == "Patient Portal & Real-Time Tracking":
             # 2. Update Maternal State with all 12 Clinical Predictors & Re-predict GDM Risk
             st.session_state.maternal_inputs.update({
                 "AgeAtStartOfSpell": v_age,
-                "Gestation at booking (Weeks)": v_ga,
-                "Body Mass Index at Booking": v_bmi,
+                "Gestation at booking (Weeks)": v_booking_ga,
+                "Body Mass Index at Booking": v_booking_bmi,
                 "Gravida": v_gravida,
                 "Parity": v_parity,
                 "No_Of_previous_Csections": v_csections,
                 "Index of Multiple Deprivation Rank": v_imdr,
                 "Ethnicity": v_ethnicity,
-                "SystolicBloodPressureCuff": v_sys,
-                "Diastolic Blood Pressure": v_dia,
-                "Glucoselevelblood": v_glu,
-                "Glucoselevel0minblood": v_ogtt0,
-                "Glucoselevel120minblood": v_ogtt120,
-                "Obese?": "YES" if v_bmi >= 30.0 else "NO"
+                "SystolicBloodPressureCuff": v_booking_sys,
+                "Diastolic Blood Pressure": v_booking_dia,
+                "Obese?": "YES" if v_booking_bmi >= 30.0 else "NO"
             })
+            # Lab values only update the record when actually measured
+            for _key, _val in (("Glucoselevelblood", v_glu), ("Glucoselevel0minblood", v_ogtt0), ("Glucoselevel120minblood", v_ogtt120)):
+                if _val is not None:
+                    st.session_state.maternal_inputs[_key] = float(_val)
+            if vital_payload["ogtt_recorded"]:
+                _o = ogtt_diagnosis(v_ogtt0, v_ogtt120)
+                _o.update({"fasting": v_ogtt0, "two_hour": v_ogtt120, "week": float(v_ga)})
+                st.session_state.ogtt_result = _o
+            st.session_state.latest_observation = dict(vital_payload)
 
+            st.session_state.current_ga_weeks = float(v_ga)
             new_gdm_res = mat_pred.predict_gdm_risk(st.session_state.maternal_inputs)
             st.session_state.gdm_result = new_gdm_res
             gdm_prob = new_gdm_res["gdm_probability"]
@@ -1234,6 +1403,7 @@ elif nav_option == "Patient Portal & Real-Time Tracking":
         </div>
         """, unsafe_allow_html=True)
         st.caption(validated_caption(st.session_state.gdm_result, "GDM"))
+        render_ogtt_status(st.session_state.get("ogtt_result"))
 
         st.markdown("---")
         st.markdown("####  Monitoring History Summary")
@@ -1370,7 +1540,7 @@ elif nav_option == "Maternal Dashboard":
         with c_a:
             st.markdown("#####  Demographic & Obstetric History")
             age = st.slider("Maternal Age (years)", 18, 50, int(m_inputs.get("AgeAtStartOfSpell", 31)))
-            gest_wks = st.slider("Gestation at Booking (Weeks)", 6, 40, int(m_inputs.get("Gestation at booking (Weeks)", 24)))
+            gest_wks = st.slider("Gestation at Booking (Weeks)", 4, 42, int(m_inputs.get("Gestation at booking (Weeks)", 12)))
             gravida = st.slider("Gravida (Total Pregnancies)", 1, 12, int(m_inputs.get("Gravida", 1)))
             parity = st.slider("Parity (Prior Live Births)", 0, 10, int(m_inputs.get("Parity", 0)))
             csections = st.slider("Previous C-Sections", 0, 8, int(m_inputs.get("No_Of_previous_Csections", 0)))
@@ -1380,13 +1550,16 @@ elif nav_option == "Maternal Dashboard":
             m_ethnicity = st.selectbox("Ethnicity (NHS Cohort)", eth_cohort_list, index=eth_cohort_list.index(curr_eth_p) if curr_eth_p in eth_cohort_list else 0, key="mod3_ethnicity")
 
         with c_b:
-            st.markdown("#####  Hemodynamic & Glycemic Panel")
+            st.markdown("#####  Booking BMI & Blood Pressure")
             bmi = st.slider("BMI at Booking (kg/m²)", 15.0, 45.0, float(m_inputs.get("Body Mass Index at Booking", 29.4)), step=0.1)
             sys_bp = st.slider("Systolic BP (mmHg)", 80, 200, int(m_inputs.get("SystolicBloodPressureCuff", 125)))
             dia_bp = st.slider("Diastolic BP (mmHg)", 50, 120, int(m_inputs.get("Diastolic Blood Pressure", 82)))
-            glu = st.slider("Blood Glucose Level (mmol/L)", 3.0, 15.0, float(m_inputs.get("Glucoselevelblood", 6.3)), step=0.1)
-            glu0 = st.slider("OGTT 0-min Fasting Glucose", 3.0, 12.0, float(m_inputs.get("Glucoselevel0minblood", 5.2)), step=0.1)
-            glu120 = st.slider("OGTT 120-min Glucose", 4.0, 20.0, float(m_inputs.get("Glucoselevel120minblood", 8.1)), step=0.1)
+            with st.expander("Lab results (not used by the risk model)"):
+                st.caption("Recorded values only. OGTT results are judged against NICE NG3 in the panel on the right; "
+                           "enter new results through Patient Portal → Record Observation.")
+                glu = st.slider("Random blood glucose (mmol/L)", 3.0, 15.0, float(_num(m_inputs.get("Glucoselevelblood"), 6.3)), step=0.1)
+                glu0 = st.slider("OGTT fasting, 0 min (mmol/L)", 3.0, 12.0, float(_num(m_inputs.get("Glucoselevel0minblood"), 5.2)), step=0.1)
+                glu120 = st.slider("OGTT 2-hour, 120 min (mmol/L)", 4.0, 20.0, float(_num(m_inputs.get("Glucoselevel120minblood"), 8.1)), step=0.1)
 
         obese_str = "YES" if bmi >= 30.0 else "NO"
 
@@ -1440,6 +1613,7 @@ elif nav_option == "Maternal Dashboard":
         </div>
         """, unsafe_allow_html=True)
         st.caption(validated_caption(res, "GDM"))
+        render_ogtt_status(st.session_state.get("ogtt_result"))
 
         st.markdown("#### Base Model Consensus Breakdown")
         model_probs = res.get("base_probabilities", res.get("model_probabilities", {}))
@@ -1633,7 +1807,7 @@ elif nav_option == "Fetal Ultrasound Segmentation":
                 help="Official Acouslic-AI resolution is 0.28 mm/pixel."
             )
         with col_cal2:
-            current_ga = float(st.session_state.maternal_inputs.get("Gestation at booking (Weeks)", 28.0))
+            current_ga = float(min(max(st.session_state.get("current_ga_weeks", 28.0), 14.0), 42.0))
             ga_input = st.number_input(
                 "Gestational Age (weeks):", 
                 min_value=14.0, 
@@ -1962,7 +2136,7 @@ elif nav_option == "Exploratory Simulation (Neural ODE)":
         sim_weight = st.slider(
             "Current Weight (kg)",
             40.0, 150.0,
-            float(st.session_state.get("latest_observation", {}).get("weight_kg", base_inputs.get("WeightMeasured", 72.5))),
+            float(_num((st.session_state.get("latest_observation") or {}).get("weight_kg"), _num(base_inputs.get("WeightMeasured"), 72.5))),
             step=0.1,
             key="forecast_sim_weight"
         )
@@ -2007,9 +2181,9 @@ elif nav_option == "Exploratory Simulation (Neural ODE)":
             key="forecast_sim_dia_bp"
         )
         sim_gestation = st.slider(
-            "Gestational Week",
-            12, 42,
-            min(max(int(base_inputs.get("Gestation at booking (Weeks)", 24)), 12), 42),
+            "Gestational age at booking (weeks)",
+            4, 42,
+            min(max(int(base_inputs.get("Gestation at booking (Weeks)", 12)), 4), 42),
             key="forecast_sim_gestation"
         )
         sim_inputs = dict(base_inputs)
@@ -2095,7 +2269,7 @@ elif nav_option == "Macrosomia Risk Monitor":
     gdm_prob = st.session_state.gdm_result["gdm_probability"]
     ga_wks = st.number_input(
         "Gestational age at the ultrasound scan (weeks)", min_value=12.0, max_value=42.0,
-        value=float(st.session_state.get("macrosomia_scan_ga", max(float(st.session_state.maternal_inputs.get("Gestation at booking (Weeks)", 28.0)), 12.0))),
+        value=float(st.session_state.get("macrosomia_scan_ga", min(max(float(st.session_state.get("current_ga_weeks", 28.0)), 12.0), 42.0))),
         step=0.5, key="macrosomia_scan_ga",
         help="Current gestational age at the scan (not the booking GA). The published AC criterion is applied at >= 36 weeks.")
 
@@ -2242,87 +2416,86 @@ elif nav_option == "What-If Risk Simulator":
     st.markdown(f"""
     <div class="hero-banner">
         <div class="hero-title"> Interactive What-If Counterfactual & Borderline Tipping Risk Simulator</div>
-        <div class="hero-subtitle">Simulate clinical parameter modifications & boundary tipping points to visualize real-time estimated risk shifts against the <b>UNCHANGED original patient baseline</b> | Patient: <code>{st.session_state.patient_id}</code></div>
+        <div class="hero-subtitle">Change booking inputs and see how the validated models respond, against the <b>unchanged original baseline</b> (associational, not causal) | Patient: <code>{st.session_state.patient_id}</code></div>
     </div>
     """, unsafe_allow_html=True)
 
-    # 1. Obtain Original Patient Baseline State (Unchanged Reference)
+    # 1. Original patient baseline (unchanged reference)
     orig_maternal = dict(st.session_state.maternal_inputs)
     orig_fetal_bio = dict(get_active_fetal_biometrics())
+    orig_booking_ga = float(orig_maternal.get("Gestation at booking (Weeks)", 12.0))
+    # Current (scan) week is separate from booking GA: it only controls the ultrasound stage.
+    orig_scan_ga = float(st.session_state.get("macrosomia_scan_ga", max(float(st.session_state.get("current_ga_weeks", orig_booking_ga)), 12.0)))
 
-    orig_gdm_res = mat_pred.predict_gdm_risk(orig_maternal)
-    orig_gdm_prob = orig_gdm_res["gdm_probability"]
-    orig_ga = float(orig_maternal.get("Gestation at booking (Weeks)", 24.0))
+    def _whatif_eval(maternal: Dict[str, Any], scan_ga: float, fetal_bio: Dict[str, Any]) -> Dict[str, Any]:
+        """Run the validated booking models + two-stage macrosomia pathway on one input set."""
+        g = mat_pred.predict_gdm_risk(maternal)
+        m = macro_monitor.evaluate_risk(
+            maternal_gdm_prob=g["gdm_probability"],
+            gestational_age_weeks=scan_ga,
+            fetal_biometrics=fetal_bio,
+            **booking_macro_kwargs(maternal)
+        )
+        return {"gdm": g, "gdm_pct": g["gdm_probability"] * 100.0,
+                "macro": m, "macro_pct": float(m.get("risk_score", 0.0))}
 
-    orig_macro_res = macro_monitor.evaluate_risk(
-        maternal_gdm_prob=orig_gdm_prob,
-        gestational_age_weeks=orig_ga,
-        fetal_biometrics=orig_fetal_bio,
-        **booking_macro_kwargs(orig_maternal)
-    )
-    orig_macro_score = float(orig_macro_res.get("risk_score", 0.0))
+    orig = _whatif_eval(orig_maternal, orig_scan_ga, orig_fetal_bio)
     orig_traj_df = ode_predictor.predict_trajectory(orig_maternal)
 
-    # 2. Interactive What-If Simulator Controls with Borderline Threshold Badges
+    # 2. Controls
     st.markdown('<div class="glass-card">', unsafe_allow_html=True)
-    st.markdown('<div class="section-header"> Counterfactual Parameter Adjuster & Boundary Sensitivity</div>', unsafe_allow_html=True)
-    st.info(" Adjust the sliders below. **Clinical Borderline Badges** update live to alert when parameters enter warning boundaries or tip into high risk zones. The **Original Baseline** remains strictly unchanged.")
+    st.markdown('<div class="section-header"> Counterfactual Parameter Adjuster</div>', unsafe_allow_html=True)
+    st.info(
+        "Adjust the sliders to see how the **validated booking models** respond. The original baseline stays unchanged.\n\n"
+        "**How to read this:** the models describe *associations* in 23,490 past pregnancies. A lower predicted risk "
+        "after changing BMI or blood pressure shows how risk differs between women with those values; it does **not** "
+        "promise that changing this woman's BMI or blood pressure will lower her risk by that amount."
+    )
 
     col_sim1, col_sim2 = st.columns(2)
 
     with col_sim1:
-        st.markdown("####  Maternal Clinical Inputs")
-        
-        sim_age = st.slider("What-If Maternal Age (years)", 18, 50, int(orig_maternal.get("AgeAtStartOfSpell", 31)), key="sim_age")
-        sim_gravida = st.slider("What-If Gravida (Total Pregnancies)", 1, 12, int(orig_maternal.get("Gravida", 1)), key="sim_gravida")
-        sim_parity = st.slider("What-If Parity (Prior Live Births)", 0, 10, int(orig_maternal.get("Parity", 0)), key="sim_parity")
-        sim_csections = st.slider("What-If Previous C-Sections", 0, 8, int(orig_maternal.get("No_Of_previous_Csections", 0)), key="sim_csections")
-        sim_imdr = st.number_input("What-If Deprivation Rank (IMDR)", 1, 35000, int(orig_maternal.get("Index of Multiple Deprivation Rank", 12183)), step=100, key="sim_imdr")
-        
-        st.caption("ℹ️ Glucose and OGTT sliders do **not** change the GDM or macrosomia risk: the validated models use booking data only, "
-                   "because OGTT glucose is the diagnostic test itself. They only move the illustrative simulated glucose curve.")
-        sim_glu = st.slider("What-If Fasting Blood Glucose (mmol/L)", 3.0, 15.0, float(orig_maternal.get("Glucoselevelblood", 6.3)), step=0.1, key="sim_glu")
-        b_glu = " Normal Target (<5.1)" if sim_glu < 5.1 else " Borderline (5.1-6.9)" if sim_glu < 7.0 else " High Risk (≥7.0)"
-        st.caption(f"Status: **{b_glu}** | Threshold: `5.1 mmol/L`")
+        st.markdown("####  Booking-model inputs (change the risk)")
+        sim_age = st.slider("Maternal age (years)", 18, 50, int(orig_maternal.get("AgeAtStartOfSpell", 31)), key="sim_age")
+        sim_gravida = st.slider("Gravida (total pregnancies)", 1, 12, int(orig_maternal.get("Gravida", 1)), key="sim_gravida")
+        sim_parity = st.slider("Parity (prior births)", 0, 10, int(orig_maternal.get("Parity", 0)), key="sim_parity")
+        sim_csections = st.slider("Previous C-sections", 0, 8, int(orig_maternal.get("No_Of_previous_Csections", 0)), key="sim_csections")
+        sim_imdr = st.number_input("Deprivation rank (IMD)", 1, 35000, int(orig_maternal.get("Index of Multiple Deprivation Rank", 12183)), step=100, key="sim_imdr")
+        sim_booking_ga = st.slider("Gestational age at booking (weeks)", 4.0, 42.0, float(orig_booking_ga), step=1.0, key="sim_booking_ga")
+        st.caption("Booking GA is a model input. It is **not** the current week; use the scan-week slider for that.")
 
-        sim_glu0 = st.slider("What-If Fasting OGTT 0-min (mmol/L)", 3.0, 12.0, float(orig_maternal.get("Glucoselevel0minblood", 5.2)), step=0.1, key="sim_glu0")
-        b_glu0 = " Normal Target (<5.1)" if sim_glu0 < 5.1 else " Borderline (5.1-6.9)" if sim_glu0 < 7.0 else " High Risk (≥7.0)"
-        st.caption(f"Status: **{b_glu0}** | Threshold: `5.1 mmol/L`")
+        sim_bmi = st.slider("Body mass index at booking (kg/m²)", 15.0, 50.0, float(orig_maternal.get("Body Mass Index at Booking", 29.4)), step=0.1, key="sim_bmi")
+        b_bmi = "Normal (<25.0)" if sim_bmi < 25.0 else "Overweight (25.0-29.9)" if sim_bmi < 30.0 else "Obese (≥30.0)"
+        st.caption(f"Category: **{b_bmi}**")
 
-        sim_glu120 = st.slider("What-If OGTT 120-min (mmol/L)", 4.0, 20.0, float(orig_maternal.get("Glucoselevel120minblood", 8.1)), step=0.1, key="sim_glu120")
-        b_glu120 = " Normal Target (<7.8)" if sim_glu120 < 7.8 else " Borderline (7.8-11.0)" if sim_glu120 < 11.1 else " High Risk (≥11.1)"
-        st.caption(f"Status: **{b_glu120}** | Threshold: `7.8 mmol/L`")
-
-        sim_bmi = st.slider("What-If Body Mass Index (BMI)", 15.0, 50.0, float(orig_maternal.get("Body Mass Index at Booking", 29.4)), step=0.1, key="sim_bmi")
-        b_bmi = " Normal (<25.0)" if sim_bmi < 25.0 else " Borderline Overweight (25.0-29.9)" if sim_bmi < 30.0 else " Obese (≥30.0)"
-        st.caption(f"Status: **{b_bmi}** | Threshold: `25.0 kg/m²`")
+        sim_sys = st.slider("Systolic BP at booking (mmHg)", 80, 200, int(orig_maternal.get("SystolicBloodPressureCuff", 125)), step=1, key="sim_sys")
+        sim_dia = st.slider("Diastolic BP at booking (mmHg)", 50, 120, int(orig_maternal.get("Diastolic Blood Pressure", 82)), step=1, key="sim_dia")
+        b_bp = "Normal (<120/80)" if (sim_sys < 120 and sim_dia < 80) else "Hypertensive (≥140/90)" if (sim_sys >= 140 or sim_dia >= 90) else "Elevated (120-139 / 80-89)"
+        st.caption(f"Category: **{b_bp}**")
 
     with col_sim2:
-        st.markdown("####  Fetal & Gestational Parameters")
-        
-        sim_sys = st.slider("What-If Systolic BP (mmHg)", 80, 200, int(orig_maternal.get("SystolicBloodPressureCuff", 125)), step=1, key="sim_sys")
-        b_sys = " Normal (<120)" if sim_sys < 120 else " Borderline (120-139)" if sim_sys < 140 else " Hypertensive (≥140)"
-        st.caption(f"Status: **{b_sys}** | Threshold: `120 mmHg`")
-
-        sim_dia = st.slider("What-If Diastolic BP (mmHg)", 50, 120, int(orig_maternal.get("Diastolic Blood Pressure", 82)), step=1, key="sim_dia")
-        b_dia = " Normal (<80)" if sim_dia < 80 else " Borderline (80-89)" if sim_dia < 90 else " Hypertensive (≥90)"
-        st.caption(f"Status: **{b_dia}** | Threshold: `80 mmHg`")
-
-        sim_ga = st.slider("What-If Gestational Week", 12.0, 40.0, float(orig_ga), step=1.0, key="sim_ga")
-        st.caption(f"Active Gestation: **Week {sim_ga:.0f}**")
-
+        st.markdown("####  Ultrasound stage (macrosomia, Stage 2)")
+        sim_scan_ga = st.slider("Current gestational week (scan)", 12.0, 42.0, float(min(max(orig_scan_ga, 12.0), 42.0)), step=1.0, key="sim_scan_ga")
         sim_ac = st.number_input(
-            "What-If measured AC (cm; calibrated, 0 = unavailable)",
-            min_value=0.0,
-            max_value=42.0,
-            value=float(orig_fetal_bio.get("fetal_estimated_ac_cm") or 0.0),
-            step=0.2,
-            key="sim_ac"
+            "Measured AC (cm; 0 = unavailable)",
+            min_value=0.0, max_value=42.0,
+            value=float(orig_fetal_bio.get("measured_ac_cm") or orig_fetal_bio.get("fetal_estimated_ac_cm") or 0.0),
+            step=0.2, key="sim_ac"
         )
+        st.caption("The published criterion (AC ≥ 36 cm, Coomarasamy 2005) is applied only at ≥ 36 weeks. "
+                   "Below 36 weeks the macrosomia risk is the booking risk.")
+
+        st.markdown("####  Illustrative only (do NOT change the risk)")
+        st.caption("The validated models use booking data only, because OGTT glucose is the GDM diagnostic test itself. "
+                   "These sliders only move the illustrative Neural ODE glucose curve below.")
+        sim_glu = st.slider("Random blood glucose (mmol/L)", 3.0, 15.0, float(orig_maternal.get("Glucoselevelblood", 6.3)), step=0.1, key="sim_glu")
+        sim_glu0 = st.slider("OGTT fasting (0-min) glucose (mmol/L)", 3.0, 12.0, float(orig_maternal.get("Glucoselevel0minblood", 5.2)), step=0.1, key="sim_glu0")
+        sim_glu120 = st.slider("OGTT 2-hour (120-min) glucose (mmol/L)", 4.0, 20.0, float(orig_maternal.get("Glucoselevel120minblood", 8.1)), step=0.1, key="sim_glu120")
+        st.caption("NICE NG3 diagnostic values: fasting ≥ 5.6 or 2-hour ≥ 7.8 mmol/L.")
 
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # 3. Calculate Simulated Risk State (Current, Safe Tipped Side, Critical Tipped Side)
+    # 3. What-if state
     sim_maternal = dict(orig_maternal)
     sim_maternal.update({
         "AgeAtStartOfSpell": sim_age,
@@ -2330,224 +2503,109 @@ elif nav_option == "What-If Risk Simulator":
         "Parity": sim_parity,
         "No_Of_previous_Csections": sim_csections,
         "Index of Multiple Deprivation Rank": sim_imdr,
+        "Gestation at booking (Weeks)": sim_booking_ga,
         "Glucoselevelblood": sim_glu,
         "Glucoselevel0minblood": sim_glu0,
         "Glucoselevel120minblood": sim_glu120,
         "Body Mass Index at Booking": sim_bmi,
         "SystolicBloodPressureCuff": sim_sys,
         "Diastolic Blood Pressure": sim_dia,
-        "Gestation at booking (Weeks)": sim_ga,
         "Obese?": "YES" if sim_bmi >= 30.0 else "NO"
     })
-    sim_gdm_res = mat_pred.predict_gdm_risk(sim_maternal)
-    sim_gdm_prob = sim_gdm_res["gdm_probability"]
-
     sim_fetal_bio = dict(orig_fetal_bio)
+    sim_fetal_bio["measured_ac_cm"] = sim_ac if sim_ac > 0 else None
     sim_fetal_bio["fetal_estimated_ac_cm"] = sim_ac if sim_ac > 0 else None
-    sim_macro_res = macro_monitor.evaluate_risk(
-        maternal_gdm_prob=sim_gdm_prob,
-        gestational_age_weeks=sim_ga,
-        fetal_biometrics=sim_fetal_bio,
-        **booking_macro_kwargs(sim_maternal)
-    )
-    sim_macro_score = float(sim_macro_res.get("risk_score", 0.0))
+    sim = _whatif_eval(sim_maternal, sim_scan_ga, sim_fetal_bio)
     sim_traj_df = ode_predictor.predict_trajectory(sim_maternal)
 
-    # Tipping Scenario A: Safe Target Side (Parameters tipped to optimal clinical target)
-    safe_maternal = dict(sim_maternal)
-    safe_maternal.update({
-        "Glucoselevelblood": min(sim_glu, 4.8),
-        "Glucoselevel0minblood": min(sim_glu0, 4.7),
-        "Glucoselevel120minblood": min(sim_glu120, 7.0),
-        "Body Mass Index at Booking": min(sim_bmi, 23.5),
-        "SystolicBloodPressureCuff": min(sim_sys, 115),
-        "Diastolic Blood Pressure": min(sim_dia, 75),
-        "Obese?": "NO"
-    })
-    safe_gdm_res = mat_pred.predict_gdm_risk(safe_maternal)
-    safe_gdm_prob = safe_gdm_res["gdm_probability"]
-    safe_traj_df = ode_predictor.predict_trajectory(safe_maternal)
-
-    # Tipping Scenario B: Critical High Risk Side (Parameters tipped past border into high risk)
-    crit_maternal = dict(sim_maternal)
-    crit_maternal.update({
-        "Glucoselevelblood": max(sim_glu, 7.5),
-        "Glucoselevel0minblood": max(sim_glu0, 7.2),
-        "Glucoselevel120minblood": max(sim_glu120, 11.5),
-        "Body Mass Index at Booking": max(sim_bmi, 34.0),
-        "SystolicBloodPressureCuff": max(sim_sys, 145),
-        "Diastolic Blood Pressure": max(sim_dia, 95),
-        "Obese?": "YES"
-    })
-    crit_gdm_res = mat_pred.predict_gdm_risk(crit_maternal)
-    crit_gdm_prob = crit_gdm_res["gdm_probability"]
-    crit_traj_df = ode_predictor.predict_trajectory(crit_maternal)
-
-    # 4. Comparative Risk Metrics Display
+    # 4. Before / after cards (differences in percentage points)
     st.markdown("---")
-    st.markdown("###  Estimated Risk Shift: Original Baseline vs What-If Scenario")
+    st.markdown("###  Risk shift: original baseline vs what-if")
+    gdm_delta_pp = sim["gdm_pct"] - orig["gdm_pct"]
+    macro_delta_pp = sim["macro_pct"] - orig["macro_pct"]
+
+    def _card(col, title, value_pct, badge_level, color, delta_pp=None):
+        with col:
+            st.markdown('<div class="glass-card" style="text-align: center;">', unsafe_allow_html=True)
+            st.markdown(f"<p style='color: #64748B; margin: 0; font-size: 0.85rem;'>{title}</p>", unsafe_allow_html=True)
+            st.markdown(f"<h2 style='margin: 0.3rem 0; font-weight: 800; color: {color};'>{value_pct:.1f}%</h2>", unsafe_allow_html=True)
+            badge = "metric-badge-high" if badge_level == "High Risk" else "metric-badge-low"
+            st.markdown(f"<span class='{badge}'>{badge_level}</span>", unsafe_allow_html=True)
+            if delta_pp is not None:
+                d_col = "#DC2626" if delta_pp > 0.05 else "#16A34A" if delta_pp < -0.05 else "#64748B"
+                st.markdown(f"<p style='margin: 0.4rem 0 0 0; font-size: 0.85rem; font-weight: 700; color: {d_col};'>"
+                            f"Change: {delta_pp:+.1f} percentage points</p>", unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
 
     c_m1, c_m2, c_m3, c_m4 = st.columns(4)
-    gdm_delta = (sim_gdm_prob - orig_gdm_prob) * 100.0
-    macro_delta = sim_macro_score - orig_macro_score
+    _card(c_m1, "Original GDM risk", orig["gdm_pct"], orig["gdm"]["risk_level"], "#1E293B")
+    _card(c_m2, "What-if GDM risk", sim["gdm_pct"], sim["gdm"]["risk_level"], "#2563EB", gdm_delta_pp)
+    _card(c_m3, "Original macrosomia risk", orig["macro_pct"], orig["macro"]["risk_tier"], "#1E293B")
+    _card(c_m4, "What-if macrosomia risk", sim["macro_pct"], sim["macro"]["risk_tier"], "#7C3AED", macro_delta_pp)
+    st.caption(sim["macro"].get("explanation", "") or "")
 
-    with c_m1:
-        st.markdown('<div class="glass-card" style="text-align: center;">', unsafe_allow_html=True)
-        st.markdown("<p style='color: #64748B; margin: 0; font-size: 0.85rem;'>Original Baseline GDM Risk</p>", unsafe_allow_html=True)
-        st.markdown(f"<h2 style='margin: 0.3rem 0; font-weight: 800; color: #1E293B;'>{orig_gdm_prob*100:.1f}%</h2>", unsafe_allow_html=True)
-        orig_badge = "metric-badge-high" if orig_gdm_res['risk_level'] == "High Risk" else "metric-badge-low"
-        st.markdown(f"<span class='{orig_badge}'>{orig_gdm_res['risk_level']}</span>", unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    with c_m2:
-        st.markdown('<div class="glass-card" style="text-align: center;">', unsafe_allow_html=True)
-        st.markdown("<p style='color: #64748B; margin: 0; font-size: 0.85rem;'>What-If Simulated GDM Risk</p>", unsafe_allow_html=True)
-        st.markdown(f"<h2 style='margin: 0.3rem 0; font-weight: 800; color: #2563EB;'>{sim_gdm_prob*100:.1f}%</h2>", unsafe_allow_html=True)
-        sim_badge = "metric-badge-high" if sim_gdm_res['risk_level'] == "High Risk" else "metric-badge-low"
-        st.markdown(f"<span class='{sim_badge}'>{sim_gdm_res['risk_level']}</span>", unsafe_allow_html=True)
-        st.markdown(f"<p style='margin: 0.4rem 0 0 0; font-size: 0.85rem; font-weight: 700; color: {'#DC2626' if gdm_delta > 0 else '#16A34A'};'>Delta: {gdm_delta:+.1f}%</p>", unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    with c_m3:
-        st.markdown('<div class="glass-card" style="text-align: center;">', unsafe_allow_html=True)
-        st.markdown("<p style='color: #64748B; margin: 0; font-size: 0.85rem;'>Original Macrosomia Risk</p>", unsafe_allow_html=True)
-        st.markdown(f"<h2 style='margin: 0.3rem 0; font-weight: 800; color: #1E293B;'>{orig_macro_score:.1f}%</h2>", unsafe_allow_html=True)
-        orig_m_badge = "metric-badge-high" if orig_macro_res['risk_tier'] == "High Risk" else "metric-badge-low"
-        st.markdown(f"<span class='{orig_m_badge}'>{orig_macro_res['risk_tier']}</span>", unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    with c_m4:
-        st.markdown('<div class="glass-card" style="text-align: center;">', unsafe_allow_html=True)
-        st.markdown("<p style='color: #64748B; margin: 0; font-size: 0.85rem;'>What-If Macrosomia Risk</p>", unsafe_allow_html=True)
-        st.markdown(f"<h2 style='margin: 0.3rem 0; font-weight: 800; color: #7C3AED;'>{sim_macro_score:.1f}%</h2>", unsafe_allow_html=True)
-        sim_m_badge = "metric-badge-high" if sim_macro_res['risk_tier'] == "High Risk" else "metric-badge-low"
-        st.markdown(f"<span class='{sim_m_badge}'>{sim_macro_res['risk_tier']}</span>", unsafe_allow_html=True)
-        st.markdown(f"<p style='margin: 0.4rem 0 0 0; font-size: 0.85rem; font-weight: 700; color: {'#DC2626' if macro_delta > 0 else '#16A34A'};'>Delta: {macro_delta:+.1f}%</p>", unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    # 5. Boundary Tipping Sensitivity Graphs (Side-by-Side Trajectories)
+    # 5. One-factor-at-a-time sensitivity (each row changes ONE factor from the what-if state)
     st.markdown('<div class="glass-card">', unsafe_allow_html=True)
-    st.markdown("####  Simulated Fasting Glucose Trajectories (Illustrative, not validated)")
-    st.caption("Side-by-side trajectory comparison: **Original Patient Baseline (Left)** vs **Current What-If & Tipping Sensitivity Scenarios (Right)**.")
+    st.markdown("####  One-factor sensitivity (from the what-if state)")
+    st.caption("Each row changes a single factor and keeps every other what-if value fixed, so the effect of each factor is shown separately.")
 
-    x_col_orig = "gestational_age_weeks" if "gestational_age_weeks" in orig_traj_df.columns else "gestational_week"
-    y_gdm_orig = "glucose_level"
+    def _variant(**updates):
+        mat = dict(sim_maternal)
+        mat.update(updates)
+        if "Body Mass Index at Booking" in updates:
+            mat["Obese?"] = "YES" if updates["Body Mass Index at Booking"] >= 30.0 else "NO"
+        return _whatif_eval(mat, sim_scan_ga, sim_fetal_bio)
 
-    x_col_sim = "gestational_age_weeks" if "gestational_age_weeks" in sim_traj_df.columns else "gestational_week"
-    y_gdm_sim = "glucose_level"
-
-    col_g1, col_g2 = st.columns(2)
-
-    with col_g1:
-        st.markdown("<h5 style='text-align: center; color: #1E293B;'> Simulated Patient Baseline Trajectory (Exploratory)</h5>", unsafe_allow_html=True)
-        fig_orig_traj = go.Figure()
-
-        # 1. Original Baseline (Solid Blue)
-        fig_orig_traj.add_trace(go.Scatter(
-            x=orig_traj_df[x_col_orig],
-            y=orig_traj_df[y_gdm_orig],
-            mode="lines+markers",
-            name="Original Baseline (Unchanged)",
-            line=dict(color="#2563EB", width=3.5),
-            marker=dict(size=8, symbol="circle")
-        ))
-
-        # Reference Risk Threshold Bands
-        fig_orig_traj.add_hline(y=5.6, line_dash="dot", line_color="#EF4444", annotation_text="Fasting 5.6 mmol/L (NICE NG3 GDM diagnostic value)", annotation_position="top right")
-
-        fig_orig_traj.update_layout(
-            xaxis_title="Gestational Week (12 to 40)",
-            yaxis_title="Simulated fasting glucose (mmol/L)",
-            height=430,
-            paper_bgcolor="rgba(0,0,0,0)",
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-        )
-
-        st.plotly_chart(fig_orig_traj, use_container_width=True)
-
-    with col_g2:
-        st.markdown("<h5 style='text-align: center; color: #1E293B;'> Simulated What-If Trajectories (Exploratory)</h5>", unsafe_allow_html=True)
-        fig_sim_traj = go.Figure()
-
-        # 2. What-If Scenario (Dashed Pink)
-        fig_sim_traj.add_trace(go.Scatter(
-            x=sim_traj_df[x_col_sim],
-            y=sim_traj_df[y_gdm_sim],
-            mode="lines+markers",
-            name="Current What-If Scenario",
-            line=dict(color="#EC4899", width=3.5, dash="dash"),
-            marker=dict(size=8, symbol="diamond")
-        ))
-
-        # 3. Tipped to Safe Target Side (Dotted Green)
-        fig_sim_traj.add_trace(go.Scatter(
-            x=safe_traj_df[x_col_sim],
-            y=safe_traj_df[y_gdm_sim],
-            mode="lines",
-            name=" Safe Target (Low Risk)",
-            line=dict(color="#16A34A", width=2.5, dash="dot")
-        ))
-
-        # 4. Tipped to High Risk Critical Side (Dotted Red)
-        fig_sim_traj.add_trace(go.Scatter(
-            x=crit_traj_df[x_col_sim],
-            y=crit_traj_df[y_gdm_sim],
-            mode="lines",
-            name=" Critical (High Risk)",
-            line=dict(color="#DC2626", width=2.5, dash="dot")
-        ))
-
-        # Reference Risk Threshold Bands
-        fig_sim_traj.add_hline(y=5.6, line_dash="dot", line_color="#EF4444", annotation_text="Fasting 5.6 mmol/L (NICE NG3 GDM diagnostic value)", annotation_position="top right")
-
-        fig_sim_traj.update_layout(
-            xaxis_title="Gestational Week (12 to 40)",
-            yaxis_title="Simulated fasting glucose (mmol/L)",
-            height=430,
-            paper_bgcolor="rgba(0,0,0,0)",
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-        )
-
-        st.plotly_chart(fig_sim_traj, use_container_width=True)
-
+    scenarios = [
+        ("BMI 23.5 (normal)", _variant(**{"Body Mass Index at Booking": 23.5})),
+        ("BMI 34.0 (obese)", _variant(**{"Body Mass Index at Booking": 34.0})),
+        ("BP 115/75 (normal)", _variant(**{"SystolicBloodPressureCuff": 115, "Diastolic Blood Pressure": 75})),
+        ("BP 145/95 (hypertensive)", _variant(**{"SystolicBloodPressureCuff": 145, "Diastolic Blood Pressure": 95})),
+        ("Age 25", _variant(**{"AgeAtStartOfSpell": 25})),
+        ("Age 38", _variant(**{"AgeAtStartOfSpell": 38})),
+    ]
+    rows = []
+    for name, r in scenarios:
+        rows.append({
+            "Scenario (one change)": name,
+            "GDM risk (%)": round(r["gdm_pct"], 1),
+            "GDM change (pp)": round(r["gdm_pct"] - sim["gdm_pct"], 1),
+            "GDM flag": r["gdm"]["risk_level"],
+            "Macrosomia risk (%)": round(r["macro_pct"], 1),
+            "Macrosomia change (pp)": round(r["macro_pct"] - sim["macro_pct"], 1),
+        })
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    st.caption("pp = percentage points relative to the current what-if values. Associational, not causal.")
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # 6. Borderline Sensitivity Table & Clinical Insights
-    c_bc1, c_bc2 = st.columns([1.2, 1])
+    # 6. Illustrative glucose trajectories
+    st.markdown('<div class="glass-card">', unsafe_allow_html=True)
+    st.markdown("####  Simulated fasting glucose (illustrative Neural ODE, not validated)")
+    st.caption("The Neural ODE failed its held-out glucose check (R² = −2.20 at week 26), so these curves show model behaviour, not a forecast.")
+    x_col = "gestational_age_weeks" if "gestational_age_weeks" in orig_traj_df.columns else "gestational_week"
+    fig_traj = go.Figure()
+    fig_traj.add_trace(go.Scatter(x=orig_traj_df[x_col], y=orig_traj_df["glucose_level"], mode="lines+markers",
+                                  name="Original baseline", line=dict(color="#2563EB", width=3)))
+    fig_traj.add_trace(go.Scatter(x=sim_traj_df[x_col], y=sim_traj_df["glucose_level"], mode="lines+markers",
+                                  name="What-if", line=dict(color="#EC4899", width=3, dash="dash")))
+    fig_traj.add_hline(y=5.6, line_dash="dot", line_color="#EF4444",
+                       annotation_text="Fasting 5.6 mmol/L (NICE NG3 diagnostic value)", annotation_position="top right")
+    fig_traj.update_layout(xaxis_title="Gestational week", yaxis_title="Simulated fasting glucose (mmol/L)",
+                           height=420, paper_bgcolor="rgba(0,0,0,0)",
+                           legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+    st.plotly_chart(fig_traj, use_container_width=True)
+    st.markdown('</div>', unsafe_allow_html=True)
 
-    with c_bc1:
-        st.markdown('<div class="glass-card">', unsafe_allow_html=True)
-        st.markdown("####  Borderline Thresholds & Sensitivity Matrix")
-
-        sensitivity_data = [
-            {"Parameter": "Fasting Blood Glucose", "Selected Value": f"{sim_glu} mmol/L", "Border Status": b_glu, "If Tipped Safe": "No effect on booking risk", "If Tipped Critical": "No effect (diagnostic value)"},
-            {"Parameter": "OGTT 0-min Glucose", "Selected Value": f"{sim_glu0} mmol/L", "Border Status": b_glu0, "If Tipped Safe": "No effect on booking risk", "If Tipped Critical": "No effect (diagnostic value)"},
-            {"Parameter": "OGTT 120-min Glucose", "Selected Value": f"{sim_glu120} mmol/L", "Border Status": b_glu120, "If Tipped Safe": "No effect on booking risk", "If Tipped Critical": "No effect (diagnostic value)"},
-            {"Parameter": "Body Mass Index (BMI)", "Selected Value": f"{sim_bmi} kg/m²", "Border Status": b_bmi, "If Tipped Safe (<25.0)": f"GDM Risk: {safe_gdm_prob*100:.1f}%", "If Tipped Critical (≥30.0)": f"GDM Risk: {crit_gdm_prob*100:.1f}%"},
-            {"Parameter": "Blood Pressure (Sys/Dia)", "Selected Value": f"{sim_sys}/{sim_dia} mmHg", "Border Status": f"{b_sys} / {b_dia}", "If Tipped Safe (<120/80)": f"GDM Risk: {safe_gdm_prob*100:.1f}%", "If Tipped Critical (≥140/90)": f"GDM Risk: {crit_gdm_prob*100:.1f}%"},
-            {"Parameter": "Measured AC", "Selected Value": f"{sim_ac:.1f} cm" if sim_ac > 0 else "Unavailable", "Border Status": "Supporting deviation only" if sim_ac > 0 else "Unavailable", "If Tipped Safe": "Does not change model decision", "If Tipped Critical": "Does not change model decision"}
-        ]
-
-        sens_df = pd.DataFrame(sensitivity_data)
-        st.dataframe(sens_df, use_container_width=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    with c_bc2:
-        st.markdown('<div class="glass-card">', unsafe_allow_html=True)
-        st.markdown("####  Clinical Tipping Point Takeaways")
-        
-        st.write(f"- **Current What-If GDM Risk**: `{sim_gdm_prob*100:.1f}%` ({sim_gdm_res['risk_level']})")
-        st.write(f"- **Best Case (Safe Tipped Target)**: `{safe_gdm_prob*100:.1f}%` (Optimal Control)")
-        st.write(f"- **Worst Case (Critical Tipped Risk)**: `{crit_gdm_prob*100:.1f}%` (Severe Elevation)")
-
-        if sim_gdm_res["risk_level"] != "High Risk":
-            st.success(f" **Not flagged at booking**: risk below the validated top-20% threshold ({sim_gdm_res['flag_threshold']*100:.1f}%).")
-        elif False:
-            st.warning(" **Patient on Clinical Borderline**: The current parameters are hovering near the 35-65% warning zone. Small changes (e.g. lowering glucose by 1.0 mmol/L) will tip the trajectory into the safe green zone.")
-        else:
-            st.error(f" **Flagged at booking (top 20% risk, ≥ {sim_gdm_res['flag_threshold']*100:.1f}%)**: offer early glucose testing per local protocol.")
-            
-        st.markdown('</div>', unsafe_allow_html=True)
+    # 7. Summary
+    st.markdown('<div class="glass-card">', unsafe_allow_html=True)
+    st.markdown("####  Summary")
+    st.write(f"- **What-if GDM risk:** {sim['gdm_pct']:.1f}% ({gdm_delta_pp:+.1f} pp vs baseline)")
+    st.write(f"- **What-if macrosomia risk:** {sim['macro_pct']:.1f}% ({macro_delta_pp:+.1f} pp vs baseline)")
+    if sim["gdm"]["risk_level"] == "High Risk":
+        st.error(f"**Flagged at booking** (top 20% risk, ≥ {sim['gdm']['flag_threshold']*100:.1f}%): offer early glucose testing per local protocol.")
+    else:
+        st.success(f"**Not flagged at booking**: below the validated top-20% threshold ({sim['gdm']['flag_threshold']*100:.1f}%). Routine OGTT at 24–28 weeks still applies.")
+    st.markdown('</div>', unsafe_allow_html=True)
 
 
 
@@ -2629,10 +2687,11 @@ elif nav_option == "Clinical Action Plan":
 
     gdm_lvl = st.session_state.gdm_result["risk_level"]
     gdm_prob = st.session_state.gdm_result["gdm_probability"]
-    ga_wks = st.session_state.maternal_inputs["Gestation at booking (Weeks)"]
+    ga_wks = float(st.session_state.get("current_ga_weeks", st.session_state.maternal_inputs["Gestation at booking (Weeks)"]))
 
     macro_res = macro_monitor.evaluate_risk(maternal_gdm_prob=gdm_prob, gestational_age_weeks=ga_wks, **booking_macro_kwargs(st.session_state.maternal_inputs))
     macro_tier = macro_res["risk_tier"]
+    render_ogtt_status(st.session_state.get("ogtt_result"))
 
     recs = rec_engine.generate_recommendations(
         gdm_risk_level=gdm_lvl,

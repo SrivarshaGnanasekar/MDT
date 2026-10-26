@@ -1,0 +1,810 @@
+\documentclass[conference]{IEEEtran}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{cite}
+\usepackage{graphicx}
+\usepackage{amsmath,amssymb}
+\usepackage{array,booktabs}
+\usepackage{url}
+\usepackage[hidelinks]{hyperref}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning}
+\renewcommand{\arraystretch}{1.06}
+
+\begin{document}
+\title{Multimodal Fusion for Early Screening of Gestational Diabetes Mellitus and Fetal Macrosomia Using Digital Twins}
+
+\author{\IEEEauthorblockN{R. Nirmalan}
+\IEEEauthorblockA{Assistant Professor (Sr.G)\\Department of Artificial Intelligence and Data Science\\Mepco Schlenk Engineering College, Sivakasi, India}
+\and
+\IEEEauthorblockN{G. A. Srivarsha}
+\IEEEauthorblockA{Department of Artificial Intelligence and Data Science\\Mepco Schlenk Engineering College, Sivakasi, India}
+\and
+\IEEEauthorblockN{P. Sankari}
+\IEEEauthorblockA{Department of Artificial Intelligence and Data Science\\Mepco Schlenk Engineering College, Sivakasi, India}}
+
+\maketitle
+
+
+\begin{abstract}
+Gestational diabetes mellitus (GDM) and fetal macrosomia usually show up only after the halfway point in pregnancy. We've built MDT-GEN, a maternal--fetal digital twin system to catch risks much earlier. It combines prediction at the first antenatal visit, a two-step pathway for identifying macrosomia, and measures the fetus's abdominal circumference (AC). The models use ten variables available right at the start---no OGTT glucose, no delivery or neonatal outcomes. In a set of nearly 4,700 women at one hospital, our GDM model pulled an AUROC of 0.712, Brier score of 0.071, and calibration slope of 0.96. The macrosomia model's AUROC was 0.639, with calibration slope sitting at 1.30. For AC measurement, we looked at 83 ultrasound sweeps from 42 women and got a mean absolute error of 10.7 mm and mean bias of \ensuremath{-}4.9 mm. Models trained on synthetic data didn't generalize---AUROC dropped to 0.504. The neural ODE model didn't predict fasting glucose much better than just using the mean ($R^2$ = \ensuremath{-}2.20); we consider it an illustration, not a real prediction. Since maternal and ultrasound datasets aren't linked, modules were tested separately. We still need external and prospective validation.
+\end{abstract}
+
+\begin{IEEEkeywords}gestational diabetes mellitus, fetal macrosomia, digital twins, clinical prediction, fetal biometry\end{IEEEkeywords}
+
+
+\section{Introduction}
+
+GDM is basically high blood sugar first spotted during pregnancy. Most doctors diagnose it with a 75 g oral glucose tolerance test, following IADPSG thresholds. The HAPO study found bad outcomes climb as maternal glucose rises, with bigger babies---birthweight above the 90th percentile. Macrosomia usually means birthweight over 4,000 g, which ups the risk for shoulder dystocia, C-section, and newborn hypoglycemia.
+
+
+
+Problem is, both conditions tend to get caught late. OGTT's run at 24--28 weeks, and most macrosomia suspicions are confirmed by ultrasound in the third trimester. If we could spot risk at the first antenatal visit---usually around week 12---it'd open the door for earlier tests, lifestyle tweaks, and closer growth monitoring for women who actually need it.
+
+
+
+Researchers have been rolling out machine learning models for early GDM and macrosomia prediction, but a recent review showed external validation is rare, and calibration isn't well reported.
+
+
+
+Three big issues keep popping up:
+
+
+
+\begin{enumerate}
+
+\item Target leakage---some models use OGTT glucose itself, basically using the test to predict the test.
+
+\item Uncalibrated probabilities---adjusting for rare outcomes can make models look better, but then ``40\% risk'' isn't actually 40\%.
+
+\item Unvalidated fusion---combining maternal records and ultrasound images from different sources means the combined score can't really be validated.
+
+\end{enumerate}
+
+Digital twins are a good fit for care before birth. They're patient-specific models updated as new data comes in. Neural ODEs can represent changes between clinic visits, and generative models like CTGAN make synthetic records easier to share. But every piece needs solid validation.
+
+
+
+MDT-GEN brings these together and sticks to the rule that anything delivered as output is either validated or clearly marked as unvalidated.
+
+
+
+What's new here?
+
+
+
+\begin{itemize}
+
+\item Booking-visit models for GDM and macrosomia, built safe from target leakage---GDM model is well calibrated, macrosomia less so.
+
+\item A two-step macrosomia pathway: booking-model estimates as a pre-test, treated with care because of calibration issues.
+
+\item Automated AC measurement pipeline for ACOUSLIC-AI blind-sweep ultrasound---tested on held-out data and compared with previous challenge winners.
+
+\item An honest audit of the Neural ODE module---turns out, with just one glucose value per patient, simulating glucose dynamics doesn't work, so we're showing it mainly as an illustration.
+
+\end{itemize}
+
+Sections II--VIII cover related work, methods, datasets, results, ablations, discussion, and conclusions.
+
+
+
+\section{Related Work}
+
+\subsection{GDM Diagnosis and Early Prediction}
+
+IADPSG set OGTT thresholds for GDM, based on the HAPO study's evidence linking glucose and outcomes. Current practice is testing at 24--28 weeks. More recent ML studies try to predict GDM sooner from mom's characteristics and early bloodwork. Zaky et al. reported such models, Seifu et al. pooled externally validated GDM models and found they were only moderately accurate, often calibrated wrong, and incompletely reported. MDT-GEN fixes these by skipping diagnostic glucose, reporting calibration, and setting thresholds before testing.
+
+
+
+\subsection{Macrosomia Prediction and Ultrasound Biometry}
+
+ML models for macrosomia come at different stages in pregnancy. Accuracy improves with later data. Wang et al. built an explainable model for a Han Chinese cohort. Clinically, suspicion arises via third-trimester ultrasound. In 63 reviewed studies, AC \ensuremath{\geq} 36 cm and EFW \ensuremath{\geq} 4000 g were both pretty solid predictors of big babies (birthweight > 4000 g). Positive ultrasound results are more reliable for confirming macrosomia than negative ones for ruling it out.
+
+
+
+Estimated fetal weight (EFW) formulas include Hadlock (just AC), Campbell--Wilkin, and the four-param Hadlock model. Growth standards from INTERGROWTH-21st and ISUOG offer guidance. Sonographers have about \ensuremath{\pm}21 mm limits of agreement for AC, which sets a practical benchmark for automated measurement.
+
+
+
+\subsection{Automated Abdominal Circumference Measurement}
+
+U-Net and Attention U-Net are standard for medical image segmentation. Jang et al. automated AC from standard-plane images. The ACOUSLIC-AI challenge took things to blind sweeps in low-resource settings---six sweeps per case, 140 frames each, expert reference AC per sweep. The training set came from Sierra Leone, the hidden test set from Tanzania and the Netherlands. Winning entries used several U-Nets or a mix, selecting one frame per case and needing several minutes GPU time. Ellipse perimeters use Ramanujan's approximation.
+
+
+
+\subsection{Digital Twins and Continuous-Time Models}
+
+Digital twins are patient-specific models updated with new data. Most are still prototypes and not fully validated. Neural ODEs model how things change in continuous time, perfect for inconsistent visit timings, but their learning needs repeated measurements.
+
+
+
+\subsection{Synthetic Data and Privacy}
+
+CTGAN handles mixed-type tabular data with conditional generation. Synthetic records risk leaking membership info, so distance checks and attack-based assessments matter.
+
+
+
+\subsection{Reporting and Evaluation Standards}
+
+TRIPOD+AI and PROBAST+AI set the bar for reporting and bias assessment in prediction models. Calibration's been called the Achilles heel of predictive analytics. Decision-curve analysis and Brier score round out discrimination metrics. We used random forest, XGBoost, CatBoost, stacked generalisation, with SHAP explanations.
+
+
+
+\section{Proposed Approach}
+
+\subsection{Model Overview}
+
+MDT-GEN has five main parts:
+
+
+
+\begin{itemize}
+
+\item Booking-risk module: Ensemble models for GDM and macrosomia, ten predictors at booking. GDM calibration solid, macrosomia less so.
+
+\item Two-stage macrosomia pathway: Uses Bayesian update via published ultrasound criterion.
+
+\item Fetal biometry: Attention U-Net segmentation on ACOUSLIC-AI sweeps, ellipse fitting, and AC in mm.
+
+\item Trajectory module: Neural ODEs simulate fasting glucose, BMI, and blood pressure from week 12--40.
+
+\item Synthetic-cohort module: CTGAN trained on booking predictors; audit for fidelity, utility, privacy.
+
+\end{itemize}
+
+The ``twin state'' is a record combining booking predictors, validated risks, and the latest fetal biometry. Since maternal and ultrasound datasets aren't linked, there's no learned fusion score.
+
+
+
+Fig. 1 summarizes the MDT-GEN architecture.
+
+
+
+\begin{figure*}[!t]
+\centering
+\includegraphics[height=0.86\textheight,width=\textwidth,keepaspectratio]{figures/fig1_architecture.png}
+\caption{MDT-GEN architecture.}
+\label{fig:architecture}
+\end{figure*}
+
+Booking info drives both risk models. Late scan feeds in through published criteria. Neural ODE and CTGAN outputs are shown but don't affect risk estimates.
+
+
+
+\subsection{Feature Representation and Leakage Guards}
+
+The cohort is a set of booking predictors (nine numeric and one ethnicity category) and outcomes---GDM or macrosomia, based on diagnosis or birthweight respectively. Ten predictors used, all present at booking:
+
+
+
+\begin{itemize}
+
+\item maternal age
+
+\item gestational age at booking
+
+\item booking BMI
+
+\item gravidity
+
+\item parity
+
+\item number of previous C-sections
+
+\item Index of Multiple Deprivation rank
+
+\item systolic BP
+
+\item diastolic BP
+
+\item ethnicity
+
+\end{itemize}
+
+We explicitly block OGTT glucose, cross-outcomes, and delivery/neonatal data from model input. Implausible values are made missing before training (e.g., gestational age outside 4--42 weeks, gravidity >20, BP outside plausible range). About 60\% missing BP entries, so we add an indicator for missingness. All numeric features median-imputed and standardized, ethnicity one-hot encoded.
+
+
+
+\subsection{Calibrated Stacking Ensemble}
+
+We train four models: logistic regression, random forest, XGBoost, CatBoost. Use 5-fold cross-validation, get out-of-fold probabilities for each learner. A logistic meta-learner blends them. Base learners then retrained on full data. No class re-weighting, so probabilities stay as is.
+
+
+
+Calibration checked via logistic recalibration. Perfect calibration means slope = 1, intercept = 0. Brier score and scaled Brier score gauge overall accuracy. We set the operating threshold at the 80th percentile of booking-risk probabilities, flagging top 20\%. Youden's J is a secondary threshold. Net benefit also reported.
+
+
+
+\subsection{Two-Stage Macrosomia Pathway}
+
+Stage 1 is booking model estimate (p$_{0}$). It's well matched to prevalence, but calibration slope (1.30) shows some inaccuracies. Stage 2 applies a published ultrasound criterion: if three measurements are there, use four-parameter Hadlock EFW \ensuremath{\geq} 4000 g; otherwise, AC \ensuremath{\geq} 36 cm. Only scans at 36+ weeks count. We use Bayes' rule to get post-test probability. This assumes likelihood ratios transfer, so it's marked exploratory.
+
+
+
+Three risk tiers:
+
+
+
+\begin{itemize}
+
+\item High: Stage 2 positive
+
+\item Moderate: Stage 1 flags at booking, but Stage 2 not positive---growth scan recommended
+
+\item Low: neither flagged
+
+\end{itemize}
+
+Median AC for gestational age (AC$_{m}$$_{e}$d = GA \ensuremath{-} 5 cm, valid for 20--40 weeks) just shown for context.
+
+
+
+\subsection{Fetal Abdominal Circumference Biometry}
+
+We use Attention U-Net (about 7.86M parameters). Five encoder levels, additive attention gates. Inputs: grayscale frames resized to 320 \ensuremath{\times} 416. Training mixes annotated and empty frames with various augmentations. Loss is cross-entropy + soft Dice, AdamW optimizer (3e-4 learning rate, 1e-4 weight decay), runs 50 epochs, batch size 16, one NVIDIA T4 GPU. Best checkpoint kept.
+
+
+
+For each sweep (140 frames), we threshold the probability map, grab the largest connected component (\ensuremath{\geq}2,000 pixels), measure mean confidence. Best five frames kept. Each is resized, ellipse fitted, axes measured, perimeter calculated via Ramanujan's formula. Sweep AC is median of the five. For single frames, AC-only Hadlock EFW calculated.
+
+
+
+\subsection{Continuous-Time Trajectory Simulation}
+
+Encoder maps booking predictors to latent vector. Projector sets initial state with fasting glucose, BMI, SBP. Dynamics rate-bounded, integrated with Runge--Kutta from week 12--40. Training fits initial state; with only one glucose per woman, slope isn't supervised.
+
+
+
+\subsection{Synthetic Cohort Generation}
+
+CTGAN trained on booking predictors plus GDM label. Uses normalisation and PacGAN discrimination. Synthetic data checked for correlation and utility via TSTR. Privacy not formally tested here---distance and attacks left for later. Not used for training clinical models.
+
+
+
+\subsection{Algorithms}
+
+\subsubsection*{Algorithm 1 : Booking Model Training}
+
+\begin{enumerate}
+
+\item Load 80/20 split, leak-guard, apply quality rules.
+
+\item For each fold: preprocess, train four base learners, gather OOF probabilities.
+
+\item Fit meta-learner.
+
+\item Set threshold at 80th percentile of OOF stacked probabilities.
+
+\item Retrain everything on full training data.
+
+\item Score held-out set once, report metrics and SHAP with bootstrapping.
+
+\end{enumerate}
+
+\subsubsection*{Algorithm 2 : Two-Stage Macrosomia Inference}
+
+\begin{enumerate}
+
+\item Compute booking risk (p$_{0}$); flag if \ensuremath{\geq} threshold.
+
+\item If late scan available, use EFW or AC criteria and matching likelihood ratio.
+
+\item Compute post-test risk (p$_{1}$) via Bayes rule.
+
+\item Assign risk tier, report p$_{0}$, p$_{1}$, and which criterion used.
+
+\end{enumerate}
+
+\section{Dataset Description}
+
+We used three different datasets, each chosen for what it could specifically validate: a maternity cohort for the booking models, ACOUSLIC-AI for abdominal circumference (AC) measurement, and a synthetic longitudinal cohort to benchmark the Neural ODE method. A. Maternal Cohort (St Mary's Hospital GDM Dataset) The maternal data comes from anonymized electronic health records at St Mary's Hospital in London, as described by Jeyaparam and Agha-Jaffar \cite{r41}. This retrospective study used CERNER records covering pregnancies managed at the hospital from April 2016 to November 2019. They started with 26,063 patients. The dataset captures things like postcode, height, weight, booking BMI, self-reported ethnicity, parity, whether a 75g OGTT was offered, and glucose levels at 0 and 120 minutes after the test. Other info includes mode of delivery, total blood loss, gestational age, baby's birthweight, special care admissions, length of stay, fetal sex, and stillbirth. Important: any record missing key information was dropped---no imputation. Units were straightened out, and big outliers were either corrected or removed when reviewers couldn't check the original data. After this initial cleanup, only records with a GDM outcome were kept for analysis, leaving us with 23,490 women and 48 variables. The cohort was split once into a training set (80\%) and a test set (20\%), stratified by GDM with a random seed of 42. Every booking-model experiment used this split. Table I gives a summary. Roughly 23\% of the women booked beyond 12 weeks, so results for the \ensuremath{\leq}12-week subgroup are reported separately. Fasting OGTT glucose was recorded in 72\% of cases: almost every woman with GDM (99.9\%) but only about 70\% of those without. This pattern means the missingness is informative and another reason to leave it out.
+
+
+
+\begin{table}[!t]
+\centering
+\caption{Maternal cohort split and outcomes}\label{tab:1}
+\footnotesize
+\setlength{\tabcolsep}{2.5pt}
+\begin{tabular}{lrrr}
+\toprule
+\textbf{Split} & \textbf{Women} & \textbf{GDM, n (\%)} & \textbf{Macrosomia, n (\%)} \\
+\midrule
+Training & 18,792 & 1,483 (7.89) & 1,506 (8.01) \\
+Test & 4,698 & 371 (7.90) & 375 (7.98) \\
+Total & 23,490 & 1,854 (7.89) & 1,881 (8.01) \\
+\bottomrule
+\end{tabular}
+\vspace{2pt}
+\par\footnotesize LGA prevalence (\ensuremath{\geq}90th centile) in the test set: 11.88\%.
+\end{table}
+
+
+\begin{table}[t]
+\centering
+\caption{Missingness of booking predictors (whole cohort)}\label{tab:2}
+\footnotesize
+\setlength{\tabcolsep}{2pt}
+\begin{tabular}{p{1.04in}r p{1.92in}}
+\toprule
+\textbf{Predictor} & \textbf{Missing (\%)} & \textbf{Handling} \\
+\midrule
+Diastolic blood pressure & 65.3 & Median imputation + missingness flag \\
+Systolic blood pressure & 58.9 & Median imputation + missingness flag \\
+Gestational age at booking & 9.1 & Median imputation; out-of-range values set to missing \\
+Age, BMI, gravidity, parity, previous caesarean sections, IMD rank, ethnicity & < 1 & Median imputation (numeric); one-hot encoding (ethnicity) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+\subsection{ACOUSLIC-AI Blind-Sweep Ultrasound}
+
+The ACOUSLIC-AI v1.1 dataset \cite{r18,r19} provides 300 training cases from 281 subjects. Each case consists of one stacked volume of six blind sweeps, each sweep having 140 frames---that's 840 frames total, sized 744 \ensuremath{\times} 562 pixels at 0.28 mm/pixel. Frame masks show the fetal abdomen in optimal and suboptimal planes. Circumference values come from expert reference AC measurements for 553 sweeps (each case may contribute 1--6, median 229.5 mm, with a range from 140.9 to 350.6 mm). Accuracy for AC is measured only on cases that weren't used to train the segmentation model. Subjects were split 70/15/15 (seed 42), so a woman is only in one set: 207 training cases (197 women, 386 sweeps), 45 validation cases (42 women, 84 sweeps), and 48 test cases (42 women, 83 sweeps). The validation set is just for picking the checkpoint; the test set is evaluated once.
+
+
+
+\subsection{Synthetic Longitudinal Pregnancy Cohort}
+
+Since the main maternal dataset only provides one measurement per woman, you can't train Neural ODE dynamics on it. So, to check the method, we used Pinto et al.'s synthetic low-risk pregnancy dataset \cite{r39,r38}. This set, developed by the Grupo de Investigação em Engenharia e Computação Inteligente para a Inovação e o Desenvolvimento, has version 1.0 with 5,000 synthetic patient records that reflect low-risk pregnancy courses over time. Each record is wide format with 162 variables, covering stages from preconception to the early postnatal period. Variable names encode timepoints. For benchmarking, maternal weight is predicted for withheld third-trimester visits using data from earlier in pregnancy; 4,000 records are for training, and 1,000 for testing
+
+
+
+\begin{table*}[t]
+\centering
+\caption{Summary of datasets and their role}\label{tab:3}
+\scriptsize
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lccc}
+\toprule
+\textbf{Property} & \textbf{St Mary's GDM Dataset} & \textbf{ACOUSLIC-AI v1.1} & \textbf{Synthetic pregnancy cohort} \\
+Type & Real EHR, tabular & Real ultrasound sweeps & Synthetic, longitudinal \\
+Size & 26,063 initially identified; 23,490 analyzed & 300 cases, 281 subjects & 5,000 synthetic records; 162 variables \\
+Used for & GDM and macrosomia booking models; CTGAN; Neural ODE glucose audit & AC segmentation and agreement & Neural ODE method benchmark \\
+Outcome or label & GDM; birthweight \ensuremath{\geq} 4000 g & Abdomen mask; reference AC (mm) & Weight at later visits (kg) \\
+Access & Figshare \cite{r41} & Zenodo \cite{r19} & Zenodo \cite{r39} \\
+\bottomrule
+\end{tabular}}
+\end{table*}
+
+
+. The maternal and ultrasound datasets involve different populations and can't be directly linked. That's why MDT-GEN validates each module separately and doesn't combine them into a single learned fusion score.
+
+
+
+\section{Experiments and Results}
+
+On held-out data from 4,698 women, the GDM model was well-calibrated (slope 0.96). The macrosomia model averaged out to match the cohort prevalence, but its calibration slope was higher (1.30).
+
+
+
+\subsection{Experimental Setup}
+
+All booking-model experiments used the split described above. Thresholds and the meta-learner were fitted on out-of-fold training predictions; the test set was scored just once. Confidence intervals came from 1,000 bootstrap samples of the test set. Table IV covers the technical details.
+
+
+
+\begin{table}[t]
+\centering
+\caption{Configuration of the booking models}\label{tab:4}
+\footnotesize
+\setlength{\tabcolsep}{2pt}
+\begin{tabular}{p{0.95in}p{2.45in}}
+\toprule
+\textbf{Item} & \textbf{Setting} \\
+\midrule
+Logistic regression & L2, max 2,000 iterations, no class weights \\
+Random forest & 300 trees, depth 8, min. 20 samples per leaf \\
+XGBoost & 300 trees, depth 3, learning rate 0.03, subsample 0.8, column sample 0.8 \\
+CatBoost & 400 iterations, depth 4, learning rate 0.03 \\
+Stacking & 5-fold stratified OOF probabilities $\to$ logistic meta-learner \\
+Decision threshold & 80th percentile of OOF stacked risk (top 20\% flagged) \\
+Uncertainty & 1,000 bootstrap resamples; seed 42 \\
+Software & Python 3.13.7, scikit-learn 1.8.0, XGBoost 3.3.0, CatBoost 1.2.10 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+\subsection{GDM Prediction at Booking}
+
+\begin{table*}[t]
+\centering
+\caption{GDM: held-out performance (n = 4,698; 371 GDM)}\label{tab:5}
+\scriptsize
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lccccccc}
+\toprule
+\textbf{Model} & \textbf{AUROC (95\% CI)} & \textbf{AUPRC (95\% CI)} & \textbf{Brier} & \textbf{Scaled Brier} & \textbf{Cal. intercept} & \textbf{Cal. slope} & \textbf{OOF AUROC} \\
+Logistic regression & 0.714 (0.686--0.742) & 0.171 (0.146--0.204) & 0.070 & 0.042 & 0.00 & 0.93 & 0.719 \\
+Random forest & 0.700 (0.673--0.726) & 0.158 (0.133--0.189) & 0.070 & 0.035 & 0.00 & 1.26 & 0.708 \\
+XGBoost & 0.704 (0.677--0.730) & 0.158 (0.135--0.190) & 0.070 & 0.036 & 0.01 & 0.91 & 0.713 \\
+CatBoost & 0.707 (0.680--0.734) & 0.158 (0.135--0.187) & 0.070 & 0.037 & 0.02 & 0.98 & 0.715 \\
+Stacking ensemble & 0.712 (0.684--0.738) & 0.166 (0.141--0.198) & 0.071 & 0.030 & 0.00 & 0.96 & 0.719 \\
+\bottomrule
+\end{tabular}}
+\end{table*}
+
+
+At the top-20\% threshold (τ = 0.096), the model flagged 20\% of women, catching 42.9\% of GDM cases, with specificity at 82\%, positive predictive value (PPV) at 17\%, and negative predictive value (NPV) at 94.4\%. At the Youden threshold (τ = 0.063), sensitivity rose to 73.6\%, specificity dropped to 59.6\%. Decision curves showed net benefit---better than ``test all'' or ``test none''---for threshold probabilities between roughly 4\% and 18\%. For those booked at \ensuremath{\leq}12 weeks (n=3,195), AUROC was 0.711 (95\% CI 0.682--0.740) and the Brier score was 0.075. Figure 2 presents the ROC, precision--recall, and calibration curves for all models.
+
+
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.94\textwidth]{figures/fig2.png}
+\caption{GDM booking models on the held-out test set: ROC (left), precision--recall (centre) and decile calibration (right)}\label{fig:2}
+\end{figure*}
+
+\subsection{Macrosomia Prediction at Booking}
+
+\begin{table*}[t]
+\centering
+\caption{Macrosomia (birthweight \ensuremath{\geq} 4000 g): held-out performance (n = 4,698; 375 cases)}\label{tab:6}
+\scriptsize
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lccccccc}
+\toprule
+\textbf{Model} & \textbf{AUROC (95\% CI)} & \textbf{AUPRC (95\% CI)} & \textbf{Brier} & \textbf{Scaled Brier} & \textbf{Cal. intercept} & \textbf{Cal. slope} & \textbf{OOF AUROC} \\
+Logistic regression & 0.629 (0.602--0.657) & 0.122 (0.106--0.147) & 0.072 & 0.015 & 0.00 & 0.98 & 0.627 \\
+Random forest & 0.634 (0.605--0.662) & 0.124 (0.106--0.148) & 0.072 & 0.015 & 0.00 & 1.50 & 0.618 \\
+XGBoost & 0.633 (0.606--0.661) & 0.124 (0.106--0.149) & 0.072 & 0.016 & 0.01 & 1.01 & 0.626 \\
+CatBoost & 0.640 (0.612--0.667) & 0.123 (0.106--0.148) & 0.072 & 0.017 & 0.01 & 1.17 & 0.627 \\
+Stacking ensemble & 0.639 (0.611--0.667) & 0.124 (0.108--0.148) & 0.072 & 0.016 & 0.01 & 1.30 & 0.631 \\
+\bottomrule
+\end{tabular}}
+\end{table*}
+
+
+At the top-20\% threshold (τ = 0.099), 19.2\% of women were flagged. Sensitivity was 30.9\%, specificity 81.9\%, PPV 12.9\%, and NPV 93.2\%. Decision curves suggest net benefit over the basic strategies for thresholds from about 5--15\%. For women booked at \ensuremath{\leq}12 weeks, AUROC was 0.625 (95\% CI 0.592--0.662). Given the modest predictive value, we designed the two-stage approach: use the booking model as an initial screen, then rely heavily on late ultrasound (which delivers a much higher AUROC, around 0.85 for AC \ensuremath{\geq} 36 cm \cite{r27}). As an example, if a woman's booking-model estimate is 10\% and late AC is positive, her post-test risk jumps to 43.4\%; if negative, it drops to 3.9\%. But this full pathway hasn't been validated end to end. Figure 3 shows macrosomia-related curves; Figure 4 compares decision curves for the two stacking models. Both show benefit only at lower threshold probabilities, below about 15--20\%.
+
+
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.94\textwidth]{figures/fig3.png}
+\caption{Macrosomia booking models on the held-out test set: ROC (left), precision--recall (centre) and decile calibration (right)}\label{fig:3}
+\end{figure*}
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.94\textwidth]{figures/fig4.png}
+\caption{Decision curves of the stacking models on the held-out test set: (a) GDM, (b) macrosomia}\label{fig:4}
+\end{figure*}
+
+\subsection{Explainability}
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.94\textwidth]{figures/fig5.png}
+\caption{SHAP summary of the CatBoost base learner on the held-out test set: (a) GDM, (b) macrosomia. Each point is one woman; colour shows the feature value}\label{fig:5}
+\end{figure*}
+
+\begin{table*}[t]
+\centering
+\caption{Top predictors by mean |SHAP| (CatBoost, test set)}\label{tab:7}
+\scriptsize
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Rank} & \textbf{GDM} & \textbf{Mean abs. SHAP} & \textbf{Macrosomia} & \textbf{Mean abs. SHAP} \\
+1 & Maternal age & 0.316 & Booking BMI & 0.214 \\
+2 & Booking BMI & 0.303 & Ethnicity: Western European & 0.112 \\
+3 & Systolic BP not recorded & 0.225 & Ethnicity: Other & 0.088 \\
+4 & Ethnicity: Other & 0.170 & Ethnicity: British & 0.087 \\
+5 & Gestational age at booking & 0.146 & Maternal age & 0.081 \\
+6 & Ethnicity: British & 0.131 & Ethnicity: Indian & 0.054 \\
+\bottomrule
+\end{tabular}}
+\end{table*}
+
+
+Age and booking BMI carried the most influence for GDM; for macrosomia, booking BMI was top \cite{r40}. Interestingly, whether systolic blood pressure was even recorded ranks third for GDM. That likely reflects the way data was entered, not patient physiology---a limitation we discuss further.
+
+
+
+\subsection{Neural ODE Glucose Audit}
+
+We only had one true measurement: fasting OGTT glucose in held-out women who had this test (n=3,354; mean 4.35 mmol/L, SD 0.53). Since the week of OGTT isn't logged, we checked the simulated curve at weeks 24, 26, and 28, in line with NICE NG3 \cite{r40}. The model only got booking predictors, just like in the dashboard.
+
+
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.94\textwidth]{figures/fig6.png}
+\caption{Neural ODE glucose audit on held-out women with an OGTT: $R^2$ for predicting fasting OGTT glucose from the training mean, a linear model, and the Neural ODE read at weeks 12, 24, 26 and 28}\label{fig:6}
+\end{figure*}
+
+The model's starting point (week 12) is about in line with a simple linear regression: $R^2$ of 0.057 compared to 0.079, and MAE of 0.356 versus 0.344 mmol/L. Modelled glucose then drops 0.84 mmol/L from week 12 to week 26. In this OGTT window, MAE balloons to 0.80 mmol/L and $R^2$ dives to -2.20 (95\% CI -2.51 to -1.91), which is actually worse than just predicting the average for everyone. Since every woman only has one glucose value, the model can't really learn changes over time. The model's per-week GDM risk score (AUROC 0.70) didn't have truly time-specific ground truth and was dropped. Trajectories here are only illustrative, not reliable forecasts. On the synthetic longitudinal cohort \cite{r39}, the same setup predicts withheld third-trimester weight with MAE 0.87 kg. By comparison, just carrying the last observation forward gives 5.72 kg, and linear extrapolation gives 3.15 kg. Bottom line: this method works when repeated measures exist, but not for our real cohort, which lacks them.
+
+
+
+\subsection{Abdominal Circumference Agreement (held-out ACOUSLIC-AI cases)}
+
+We computed AC agreement on all 48 test cases from Section IV-B after model training had finished. The pipeline ran without changes on every sweep with an expert reference, using the correct pixel spacing. Each predicted sweep AC was compared to its official reference. Any time an abdomen wasn't detected, but a reference existed, it counted as a separate detection failure. Confidence intervals were calculated with cluster bootstrapping over subjects. We also show published variability for sonographers as a reference point, though not as a strict margin.
+
+
+
+AC agreement on the subject-level held-out test set (48 cases, 42 women; 95\% CI from cluster bootstrap over women, 2,000 resamples)
+
+
+
+\begin{table}[t]
+\centering
+\caption{Abdominal circumference measurement performance}\label{tab:8}
+\footnotesize
+\setlength{\tabcolsep}{2pt}
+\begin{tabular}{p{2.0in}p{1.15in}}
+\toprule
+\textbf{Metric (per sweep)} & \textbf{Value (95\% CI)} \\
+\midrule
+Held-out cases / women / reference sweeps & 48 / 42 / 83 \\
+Detection failures, n (\%) & 0 (0.0) \\
+Mean absolute error (mm) & 10.7 (8.5--13.1) \\
+Median absolute error (mm) & 8.1 (5.0--10.3) \\
+RMSE (mm) & 14.6 (11.7--17.5) \\
+Bias, predicted $-$ reference (mm) & $-4.9$ ($-8.0$ to $-2.2$) \\
+95\% limits of agreement (mm) & $-32.0$ to +22.3 \\
+Proportional bias slope & $-0.032$ ($-0.089$ to 0.028) \\
+Normalised absolute error & 0.045 (0.036--0.055) \\
+Within $\pm 8.8\%$ of reference AC (\%) & 83.1 (74.2--91.8) \\
+Within $\pm 10$ mm (\%) & 60.2 (49.4--70.9) \\
+Per case (mean of sweeps, n = 48): MAE / bias (mm) & 8.8 / $-6.5$ \\
+Segmentation Dice, annotated test frames & 0.925 \\
+False-positive rate on empty test frames (\%) & 23.0 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=0.94\textwidth]{figures/fig7.png}
+\caption{AC agreement on the subject-level held-out test set (83 sweeps, 42 women): predicted vs reference (left) and Bland--Altman plot with bias and 95\% limits of agreement (right)}\label{fig:7}
+\end{figure*}
+
+\subsection{Comparison with the ACOUSLIC-AI Challenge Winners}
+
+\begin{table*}[t]
+\centering
+\caption{Our Attention U-Net vs the top three ACOUSLIC-AI entries (challenge figures from \cite{r18})}\label{tab:9}
+\scriptsize
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lcccccc}
+\toprule
+\textbf{Method} & \textbf{Network} & \textbf{Test data} & \textbf{NAE, mean (median)} & \textbf{Signed AC error, mean \ensuremath{\pm} SD (mm)} & \textbf{Dice} & \textbf{Time per case} \\
+A1 (1st) & 9 \ensuremath{\times} U-Net, VGG encoder, suitability head & 282 hidden cases (Tanzania, Netherlands) & 0.16 (0.04) & \ensuremath{-}9.69 \ensuremath{\pm} 11.99 & 0.94ᵃ & 549 sᶜ \\
+A2 (2nd) & 2.5-D U-Net, ConvNeXt-V2 encoder & same & 0.16 (0.03) & \ensuremath{-}1.43 \ensuremath{\pm} 10.38 & 0.94ᵃ & 123 sᶜ \\
+A3 (3rd) & 5 \ensuremath{\times} ResNet50 + nnU-Net & same & 0.21 (0.05) & \ensuremath{-}9.78 \ensuremath{\pm} 11.12 & 0.94ᵃ & 125 sᶜ \\
+Ours & 1 \ensuremath{\times} Attention U-Net, 7.86 M parameters & 48 cases / 42 women, Sierra Leone, subject-level hold-out & 0.045 (0.033) & \ensuremath{-}4.87 \ensuremath{\pm} 13.84 & 0.925ᵇ & \ensuremath{\approx} 17 sᵈ \\
+\bottomrule
+\end{tabular}}
+\end{table*}
+
+
+ᵃ Dice on the annotated frame nearest to the selected frame. ᵇ Mean Dice over all annotated test frames. ᶜ RTX 2080 Ti \cite{r18}. ᵈ Tesla T4, including image loading and frame-level evaluation (806 s for 48 cases). Challenge NAE is per case, with cases lacking a reference in the selected sweep scored 1. Our NAE is per sweep (n = 83).
+
+
+
+A few takeaways. First, a lone Attention U-Net with top-5 frame averaging hits a median NAE (0.033) in the same ballpark as the winners (0.03--0.05) but runs much faster, though the GPU was different. Its mean NAE looks even lower, mainly because it never gets the NAE=1 penalty reserved for cases with no reference. Second, our errors are more widely spread. The SD of our signed error (13.8 mm) is larger than A1--A3 (10.4--12.0 mm). Our agreement limits (\ensuremath{\pm}27.1 mm, \ensuremath{\pm}11.8\%) are broader than sonographer variability (\ensuremath{\pm}21 mm and \ensuremath{\pm}9.1\%) \cite{r15,r18}. On a Dutch reference set, model A2 achieved tighter agreement (\ensuremath{\pm}18.3 mm, mean absolute 6.8 mm) compared to our 10.7 mm median on Sierra Leone hold-out. Our bias (-4.9 mm) is mid-range between A2 (-1.4 mm) and A1/A3 (\textasciitilde{}-9.7 mm). Third, our test set is easier---data comes from the same health units and annotators as our training data, while the challenge test set featured new sites and more expert annotators. So Table IX is just a reference, not a true ranking. A real apples-to-apples comparison would mean submitting our model to the challenge's hidden test.
+
+
+
+\subsection{Synthetic Cohort Audit}
+
+CTGAN, trained only on the top ten booking predictors and the GDM label, successfully reproduced pairwise correlations (mean absolute difference = 0.061). But a GDM model trained only on synthetic data and tested on real held-out cases (TSTR) gave an AUROC of 0.504---basically random. Using just real data, the AUROC was 0.699. Worse, adding synthetic rows to the real training set dropped AUROC to 0.601. The synthetic cohort is for demos only, not model training or sharing---and its privacy isn't attack-tested, so we don't release it.
+
+
+
+\section{Ablation Study}
+
+Three major choices influenced results: excluding OGTT glucose, not re-weighting classes, and defining macrosomia by raw birthweight. Ensembling had only minor effects.
+
+
+
+\subsection{Diagnostic Leakage}
+
+An earlier pipeline version added fasting and 2-hour OGTT glucose to other booking predictors, and scored an AUROC of 1.000 on held-out data, versus 0.704 for the safe, current ensemble. That perfect result is misleading: OGTT glucose defines the GDM label, so including it just copies the diagnosis instead of actually predicting it. Plus, it's mostly only recorded for already selected women. Thus, we leave OGTT glucose out entirely in current analyses.
+
+
+
+\subsection{Class Weighting vs Calibration}
+
+Retraining the stacking ensemble with balanced class weights (like before) didn't change the rankings, but all probabilities inflated about five times. This weighted model's Brier score was worse than just predicting the prevalence. For dashboards, only the unweighted model provides risk percentages that mean what they say. Sensitivity should be tuned using OOF thresholds---not probability distortion.
+
+
+
+\begin{table*}[t]
+\centering
+\caption{Effect of class weighting on the GDM stacking ensemble (held-out)}\label{tab:10}
+\scriptsize
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lcccccc}
+\toprule
+\textbf{Configuration} & \textbf{AUROC} & \textbf{Brier} & \textbf{Scaled Brier} & \textbf{Cal. intercept} & \textbf{Cal. slope} & \textbf{Mean predicted vs observed} \\
+Balanced class weights (original) & 0.714 & 0.216 & \ensuremath{-}1.968 & \ensuremath{-}2.47 & 0.93 & 43.9\% vs 7.9\% \\
+No class weights (proposed) & 0.712 & 0.071 & +0.030 & 0.00 & 0.96 & 7.9\% vs 7.9\% \\
+\bottomrule
+\end{tabular}}
+\end{table*}
+
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=\columnwidth]{figures/fig8.png}
+\caption{GDM calibration on the held-out test set before (class-weighted, Brier 0.216) and after (unweighted, Brier 0.071) recalibration}
+\label{fig:8}
+\end{figure}
+
+\subsection{Base Learners vs Stacking}
+
+No matter the outcome, the stacking ensemble's AUROC is within 0.004 of the best single model. Logistic regression alone got AUROC 0.714 for GDM and 0.629 for macrosomia (see Tables V and VI). With ten linear-ish predictors, adding model complexity brings little gain. We keep ensembling for continuity and robustness, but a basic logistic model would be just as defensible---and more transparent.
+
+
+
+\subsection{Outcome Definition for Macrosomia}
+
+Switching from an absolute (>4000g) to a centile-based definition (LGA, \ensuremath{\geq}90th percentile) lowered stacking AUROC from 0.639 to 0.561 (95\% CI 0.537--0.586), and calibration worsened too (slope from 1.30 to 1.42). Booking predictors just have more information about absolute size---closely tied to maternal BMI and ethnicity---than about size relative to gestational age. We stick with \ensuremath{\geq}4000g as the main outcome.
+
+
+
+\subsection{Synthetic Augmentation}
+
+Adding CTGAN-generated rows to real data lowered GDM AUROC from 0.699 to 0.601. Pseudo-labelling synthetic rows with predictions from the real model didn't help and was abandoned. Bottom line: clinical models are trained on real data only.
+
+
+
+\section{Discussion}
+
+Having a truly useful digital twin for antenatal screening relies more on keeping outputs anchored to clear evidence than on complex models.
+
+
+
+\subsection{Interpreting the Core Findings}
+
+The GDM booking model achieved an AUROC of 0.71 and solid calibration. If you flag the top 20\% by risk, you catch 43\% of GDM cases at double the base PPV---good for targeted early testing, but not real diagnosis. Universal OGTT at 24--28 weeks is still standard \cite{r1,r40}. The macrosomia model is weaker (AUROC 0.64), which lines up with Liu et al. \cite{r6} showing that prediction improves as more late-pregnancy info comes in.
+
+
+
+\subsection{Why Calibration Matters for a Digital Twin}
+
+A digital twin gives actual numbers to clinicians, so the predicted probability has to mean what it says. Using class re-weighting, as many do for imbalanced data, didn't mess up rankings but pushed average risk from 7.9\% to 43.9\% (Table X)---which would wrongly mark every woman as high-risk. Dropping class weights fixed this, with no loss of discrimination. Antenatal prediction studies really should report calibration slope, calibration intercept, and scaled Brier score alongside AUROC, just like TRIPOD+AI suggests \cite{r33}.
+
+
+
+\subsection{The Two-Stage Design as Honest Fusion}
+
+Because the maternal and ultrasound datasets come from different cohorts, there's no way to validate a fused model. MDT-GEN combines booking risks with published likelihood ratios instead. The macrosomia model's calibration (slope 1.30) means you need to be careful, and so the pathway is still exploratory. Every component is independently supported: the booking model tested on 4,698 women, and ultrasound criteria from published work. But the combination must be treated with caution, as the ratios may not transfer cleanly or account for calibration quirks. This design also fits clinical reality: women flagged as higher-risk get prioritized for growth scans, and a positive scan pushes the risk way up. In our example, a 10\% booking risk becomes 43\% after a positive AC result.
+
+
+
+\subsection{What the Neural ODE Can and Cannot Show}
+
+The Neural ODE audit serves as a warning. Training with just one glucose measure per woman gives convincing, smooth curves on the dashboard---but actually predicts OGTT glucose worse than just using the cohort mean ($R^2$ -2.2). The architecture itself works; on truly longitudinal synthetic data, it does fine. The data is the limit here---a continuous-time twin needs repeated measures, like from home glucose logs or multiple antenatal checks, before these trajectories are real forecasts.
+
+
+
+\subsection{Comparison with Existing}
+
+Approaches For biometry, ACOUSLIC-AI winners \cite{r18} proved that blind-sweep AC can nearly match sonographer agreement, using big model ensembles. Our results suggest a single lightweight network is just as good at median error and much faster---important for low-resource clinics---but error spread is wider, and lack of external test data means it's only a screening tool for now. A lot of early GDM prediction studies look better than they are because they include glucose measurements. Our own ablation confirms the same boost (AUROC 1.000), but it's not true early prediction. Models that avoid leakage at booking-stage mostly show only moderate discrimination \cite{r4,r5}; our outcomes match that, and we also report calibration and actual benefit. Direct comparison isn't really possible, given cohort and definition differences.
+
+
+
+\subsection{Limitations}
+
+\begin{enumerate}
+
+\item All results come from a single London hospital (2016--2019) using a random split, so further external and temporal validation is needed before any clinical rollout.
+
+\item About 23\% of women were booked after 12 weeks, so results for the \ensuremath{\leq}12 weeks subgroup are reported, but ``true'' first-trimester accuracy needs checking elsewhere.
+
+\item Some predictors, like blood pressure, were missing for about 60\% of women, and its missingness ranked high among GDM predictors---probably a documentation artifact, which might not generalize.
+
+\item Booking risk and ultrasound fusion used published likelihood ratios not validated in this exact population, and was applied at \ensuremath{\geq}36 weeks only.
+
+\item The AC test set is small (42 women) from just one blind-sweep program. The largest test AC was 338 mm---no fetus hit the 360 mm macrosomia cutoff---so we haven't really tested accuracy for the criterion, and the -4.9 mm model bias, if it holds for large AC, would make it slightly more conservative.
+
+\item Trajectories You can see the Neural ODE trajectories pretty clearly, but honestly, the synthetic cohort isn't much use for training (the TSTR AUROC hits just 0.50), and nobody's tried to attack it yet to see how private it really is.
+
+\end{enumerate}
+
+\subsection{Future Work}
+
+Test the booking models outside this setting, especially with Indian and other diverse cohorts. - Gather booking data linked with third-trimester ultrasounds and birthweights --- that way, we can validate the full two-stage pathway, not just parts of it. - Train the Neural ODE using serial measurements of glucose and weight, instead of single points. - Start including membership-inference tests when auditing synthetic data. - Expand the biometry module so it includes head circumference and femur length --- then we'll have a four-parameter EFW calculated automatically.
+
+
+
+\section{Conclusion}
+
+MDT-GEN works as a maternal--fetal digital twin, built for early screening of GDM and macrosomia. Every output shown is either validated or marked as unvalidated, so there's no guesswork about what's reliable. 712 and a Brier score of 0.071 on a set of 4,698 women held out from training. The predicted risks line up with what we actually see, so you can trust the percentages you show to clinicians. Booking data alone doesn't do much for macrosomia screening --- AUROC is only 0.639, with a calibration slope of 1.30. MDT-GEN sets up a two-stage pathway, combining this booking-model estimate with a published late-pregnancy ultrasound threshold. But that combined probability is just exploratory for now --- we haven't validated the full process yet. When ACOUSLIC-AI did blind sweeps, its automated AC measurement had a mean absolute error of 10.7 mm on a separate group of 42 women. The median error matched other challenge entries, but its limits of agreement were wider. Because different studies use different approaches, ranking results isn't really possible. The audits showed where the certainty drops off. Diagnostic glucose seemed accurate on paper, but that was misleading. Class re-weighting pumped risks up five-fold. The Neural ODE trajectories looked smooth, but without repeated measurements, we couldn't really validate them. So the path ahead is clear: we need external validation, linked booking--ultrasound--outcome datasets, and real longitudinal monitoring. With all that in place, the digital twin's trajectories could shift from being just an illustrative tool to actually forecasting outcomes.
+
+
+
+\begin{thebibliography}{41}\footnotesize
+
+\bibitem{r1} International Association of Diabetes and Pregnancy Study Groups Consensus Panel, ``International association of diabetes and pregnancy study groups recommendations on the diagnosis and classification of hyperglycemia in pregnancy,'' Diabetes Care, vol.~33, no. 3, pp.~676--682, 2010. doi:10.2337/dc09-1848
+
+\bibitem{r2} HAPO Study Cooperative Research Group, ``Hyperglycemia and adverse pregnancy outcomes,'' N. Engl. J. Med., vol.~358, pp.~1991--2002, 2008. doi:10.1056/NEJMoa0707943
+
+\bibitem{r3} American Diabetes Association Professional Practice Committee, ``Management of diabetes in pregnancy: Standards of Care in Diabetes---2026,'' Diabetes Care, vol.~49, suppl. 1, pp.~S321--S338, 2026. doi:10.2337/dc26-S015
+
+\bibitem{r4} H. Zaky, E. Fthenou, L. Srour, et al., ``Machine learning based model for the early detection of gestational diabetes mellitus,'' BMC Med. Inform. Decis. Mak., vol.~25, p.~130, 2025. doi:10.1186/s12911-025-02947-3
+
+\bibitem{r5} B. L. Seifu, Y. Belsti, N. B. Yimer, R. F. Goldstein, J. Enticott, and H. Teede, ``Externally validated risk prediction models for gestational diabetes mellitus: a systematic review and meta-analysis,'' Acta Obstet. Gynecol. Scand., vol.~105, pp.~1918--1931, 2026. doi:10.1111/aogs.70300
+
+\bibitem{r6} Q. Liu, S. Zhu, M. Zhao, et al., ``Machine learning approaches for predicting fetal macrosomia at different stages of pregnancy: a retrospective study in China,'' BMC Pregnancy Childbirth, vol.~25, p.~140, 2025. doi:10.1186/s12884-025-07239-2
+
+\bibitem{r7} J. Wang, X. Wang, Y. Yu, et al., ``Development and validation of an explainable machine learning-based risk prediction model for macrosomia in Han Chinese women with singleton cephalic pregnancies,'' Sci. Rep., 2026, online ahead of print. doi:10.1038/s41598-026-65628-9
+
+\bibitem{r8} B. Björnsson, C. Borrebaeck, N. Elander, et al., ``Digital twins to personalize medicine,'' Genome Med., vol.~12, p.~4, 2020. doi:10.1186/s13073-019-0701-3
+
+\bibitem{r9} E. Katsoulakis, Q. Wang, H. Wu, et al., ``Digital twins for health: a scoping review,'' npj Digit. Med., vol.~7, p.~77, 2024. doi:10.1038/s41746-024-01073-0
+
+\bibitem{r10} R. T. Q. Chen, Y. Rubanova, J. Bettencourt, and D. Duvenaud, ``Neural ordinary differential equations,'' in Adv. Neural Inf. Process. Syst. 31, 2018, pp.~6571--6583. Available: \url{https://proceedings.neurips.cc/paper\_files/paper/2018/hash/69386f6bb1dfed68692a24c8686939b9-Abstract.html}
+
+\bibitem{r11} A. T. Papageorghiou, E. O. Ohuma, D. G. Altman, et al., ``International standards for fetal growth based on serial ultrasound measurements: the Fetal Growth Longitudinal Study of the INTERGROWTH-21st Project,'' Lancet, vol.~384, no. 9946, pp.~869--879, 2014. doi:10.1016/S0140-6736(14)61490-2
+
+\bibitem{r12} J. Stirnemann, J. Villar, L. J. Salomon, et al., ``International estimated fetal weight standards of the INTERGROWTH-21st Project,'' Ultrasound Obstet. Gynecol., vol.~49, no. 4, pp.~478--486, 2017. doi:10.1002/uog.17347
+
+\bibitem{r13} L. J. Salomon, Z. Alfirevic, F. Da Silva Costa, et al., ``ISUOG Practice Guidelines: ultrasound assessment of fetal biometry and growth,'' Ultrasound Obstet. Gynecol., vol.~53, no. 6, pp.~715--723, 2019. doi:10.1002/uog.20272
+
+\bibitem{r14} H. Y. Choi, J. H. Kim, J. Y. Park, E. Y. Jung, J. H. No, K. J. Oh, and J.-S. Hong, ``Simple mathematical formulae for estimation of median values of fetal biometry at each gestational age,'' Obstet. Gynecol. Sci., vol.~59, no. 2, pp.~91--96, 2016. doi:10.5468/ogs.2016.59.2.91
+
+\bibitem{r15} I. Sarris, C. Ioannou, P. Chamberlain, et al., ``Intra- and interobserver variability in fetal ultrasound measurements,'' Ultrasound Obstet. Gynecol., vol.~39, no. 3, pp.~266--273, 2012. doi:10.1002/uog.10082
+
+\bibitem{r16} F. P. Hadlock, R. B. Harrist, R. J. Carpenter, R. L. Deter, and S. K. Park, ``Sonographic estimation of fetal weight: the value of femur length in addition to head and abdomen measurements,'' Radiology, vol.~150, no. 2, pp.~535--540, 1984. doi:10.1148/radiology.150.2.6691115
+
+\bibitem{r17} S. Campbell and D. Wilkin, ``Ultrasonic measurement of fetal abdomen circumference in the estimation of fetal weight,'' Br. J. Obstet. Gynaecol., vol.~82, no. 9, pp.~689--697, 1975. doi:10.1111/j.1471-0528.1975.tb00708.x
+
+\bibitem{r18} M. S. Sappia, C. L. de Korte, B. van Ginneken, et al., ``ACOUSLIC-AI challenge report: fetal abdominal circumference measurement on blind-sweep ultrasound data from low-income countries,'' Med. Image Anal., vol.~105, p.~103640, 2025. doi:10.1016/j.media.2025.103640
+
+\bibitem{r19} M. S. Sappia, ``ACOUSLIC-AI: Abdominal Circumference Operator-agnostic UltraSound measurement in Low-Income Countries using Artificial Intelligence,'' dataset v1.1, Zenodo, 2024. doi:10.5281/zenodo.12697994
+
+\bibitem{r20} J. Jang, Y. Park, B. Kim, S. M. Lee, J.-Y. Kwon, and J. K. Seo, ``Automatic estimation of fetal abdominal circumference from ultrasound images,'' IEEE J. Biomed. Health Inform., vol.~22, no. 5, pp.~1512--1520, 2018. doi:10.1109/JBHI.2017.2776116
+
+\bibitem{r21} O. Ronneberger, P. Fischer, and T. Brox, ``U-Net: convolutional networks for biomedical image segmentation,'' in Proc. MICCAI, 2015, pp.~234--241. doi:10.1007/978-3-319-24574-4\_28
+
+\bibitem{r22} O. Oktay, J. Schlemper, L. Le Folgoc, et al., ``Attention U-Net: learning where to look for the pancreas,'' arXiv:1804.03999, 2018. Available: \url{https://arxiv.org/abs/1804.03999}
+
+\bibitem{r23} S. Ramanujan, ``Modular equations and approximations to \ensuremath{\pi},'' Q. J. Math., vol.~45, pp.~350--372, 1914. Available: \url{https://ramanujan.sirinudi.org/Volumes/published/ram06.pdf}
+
+\bibitem{r24} L. Xu, M. Skoularidou, A. Cuesta-Infante, and K. Veeramachaneni, ``Modeling tabular data using conditional GAN,'' in Adv. Neural Inf. Process. Syst. 32, 2019, pp.~7335--7345. Available: \url{https://proceedings.neurips.cc/paper/2019/hash/562d3d0897e2c8f7b3c1e33f53e8dc1c-Abstract.html}
+
+\bibitem{r25} Z. Zhang, C. Yan, and B. A. Malin, ``Membership inference attacks against synthetic health data,'' J. Biomed. Inform., vol.~125, p.~103977, 2022. doi:10.1016/j.jbi.2021.103977
+
+\bibitem{r26} B. Kaabachi, J. Despraz, T. Meurers, et al., ``A scoping review of privacy and utility metrics in medical synthetic data,'' npj Digit. Med., vol.~8, p.~60, 2025. doi:10.1038/s41746-024-01359-3
+
+\bibitem{r27} A. Coomarasamy, M. Connock, J. Thornton, and K. S. Khan, ``Accuracy of ultrasound biometry in the prediction of macrosomia: a systematic quantitative review,'' BJOG, vol.~112, no. 11, pp.~1461--1466, 2005. doi:10.1111/j.1471-0528.2005.00702.x
+
+\bibitem{r28} L. Breiman, ``Random forests,'' Mach. Learn., vol.~45, no. 1, pp.~5--32, 2001. doi:10.1023/A:1010933404324
+
+\bibitem{r29} T. Chen and C. Guestrin, ``XGBoost: a scalable tree boosting system,'' in Proc. 22nd ACM SIGKDD, 2016, pp.~785--794. doi:10.1145/2939672.2939785
+
+\bibitem{r30} L. Prokhorenkova, G. Gusev, A. Vorobev, A. V. Dorogush, and A. Gulin, ``CatBoost: unbiased boosting with categorical features,'' in Adv. Neural Inf. Process. Syst. 31, 2018, pp.~6638--6648. Available: \url{https://proceedings.neurips.cc/paper/2018/hash/14491b756b3a51daac41c24863285549-Abstract.html}
+
+\bibitem{r31} D. H. Wolpert, ``Stacked generalization,'' Neural Netw., vol.~5, no. 2, pp.~241--259, 1992. doi:10.1016/S0893-6080(05)80023-1
+
+\bibitem{r32} S. M. Lundberg and S.-I. Lee, ``A unified approach to interpreting model predictions,'' in Adv. Neural Inf. Process. Syst. 30, 2017, pp.~4765--4774. Available: \url{https://proceedings.neurips.cc/paper/2017/hash/8a20a8621978632d76c43dfd28b67767-Abstract.html}
+
+\bibitem{r33} G. S. Collins, K. G. M. Moons, P. Dhiman, et al., ``TRIPOD+AI statement: updated guidance for reporting clinical prediction models that use regression or machine learning methods,'' BMJ, vol.~385, p.~e078378, 2024. doi:10.1136/bmj-2023-078378
+
+\bibitem{r34} K. G. M. Moons, J. A. A. Damen, T. Kaul, et al., ``PROBAST+AI: an updated quality, risk of bias, and applicability assessment tool for prediction models using regression or artificial intelligence methods,'' BMJ, vol.~388, p.~e082505, 2025. doi:10.1136/bmj-2024-082505
+
+\bibitem{r35} B. Van Calster, D. J. McLernon, M. van Smeden, L. Wynants, and E. W. Steyerberg, ``Calibration: the Achilles heel of predictive analytics,'' BMC Med., vol.~17, p.~230, 2019. doi:10.1186/s12916-019-1466-7
+
+\bibitem{r36} A. J. Vickers and E. B. Elkin, ``Decision curve analysis: a novel method for evaluating prediction models,'' Med. Decis. Making, vol.~26, no. 6, pp.~565--574, 2006. doi:10.1177/0272989X06295361
+
+\bibitem{r37} F. P. Hadlock, R. B. Harrist, R. S. Sharman, R. L. Deter, and S. K. Park, ``Estimation of fetal weight with the use of head, body, and femur measurements---a prospective study,'' Am. J. Obstet. Gynecol., vol.~151, no. 3, pp.~333--337, 1985. doi:10.1016/0002-9378(85)90298-4
+
+\bibitem{r38} G. Pinto, V. Crista, R. Silva, et al., ``Large language models for generating longitudinal synthetic data in low-risk pregnancy care,'' Data Brief, vol. 67, p. 112933, 2026. doi:10.1016/j.dib.2026.112933
+
+\bibitem{r39} G. Pinto, V. Crista, A. R. Jesus Silva, F. Andrade Bernardi, R. Almeida, B. Costa, J. Souza, A. Freitas, G. Marreiros, and L. Conceição, ``Low-Risk Synthetic Patient Level Pregnancy Trajectories,'' dataset, version 1.0, Zenodo, 2026. doi:10.5281/zenodo.19472146
+
+\bibitem{r40} National Institute for Health and Care Excellence, ``Diabetes in pregnancy: management from preconception to the postnatal period,'' NICE guideline NG3, 2015 (updated 2020). Available: \url{https://www.nice.org.uk/guidance/ng3}
+
+\bibitem{r41} S. Jeyaparam and A. Agha-Jaffar, ``GDM Dataset,'' Figshare, 2023. doi: 10.6084/m9.figshare.21806472.v1
+
+\end{thebibliography}
+
+\end{document}

@@ -66,7 +66,14 @@ class MongoDBManager:
 
         try:
             # Set short timeout so initialization doesn't hang if offline
-            self.client = MongoClient(self.uri, serverSelectionTimeoutMS=3000)
+            self.client = MongoClient(
+                self.uri,
+                serverSelectionTimeoutMS=5000,
+                connectTimeoutMS=10000,
+                socketTimeoutMS=20000,
+                retryReads=True,
+                retryWrites=True,
+            )
             # Send ping to verify connection
             self.client.admin.command('ping')
             self.db = self.client[self.db_name]
@@ -198,7 +205,11 @@ class MongoDBManager:
         user_doc = None
 
         if self.is_connected and self.db is not None:
-            user_doc = self.db[config.MONGO_COLL_USERS].find_one({"username": username})
+            try:
+                user_doc = self.db[config.MONGO_COLL_USERS].find_one({"username": username})
+            except Exception as e:
+                print(f"[MongoDBManager] Atlas read failed (get_user_by_username): {e}. Using in-memory copy.")
+                user_doc = self._memory_users.get(username)
         else:
             user_doc = self._memory_users.get(username)
 
@@ -213,11 +224,19 @@ class MongoDBManager:
     def list_all_patients(self) -> List[Dict[str, Any]]:
         """Lists all registered patients."""
         patients = []
+        memory_patients = [
+            {k: v for k, v in u.items() if k not in ("pw_hash", "salt", "_id")}
+            for u in self._memory_users.values() if u.get("role") == "Patient"
+        ]
         if self.is_connected and self.db is not None:
-            cursor = self.db[config.MONGO_COLL_USERS].find({"role": "Patient"}, {"pw_hash": 0, "salt": 0, "_id": 0})
-            patients = list(cursor)
+            try:
+                cursor = self.db[config.MONGO_COLL_USERS].find({"role": "Patient"}, {"pw_hash": 0, "salt": 0, "_id": 0})
+                patients = list(cursor)
+            except Exception as e:
+                print(f"[MongoDBManager] Atlas read failed (list_all_patients): {e}. Using in-memory copy.")
+                patients = memory_patients
         else:
-            patients = [u for u in self._memory_users.values() if u.get("role") == "Patient"]
+            patients = memory_patients
 
         # Ensure unique patient IDs list includes PATIENT_001 default
         existing_ids = {p.get("patient_id") for p in patients}
@@ -233,14 +252,19 @@ class MongoDBManager:
     def list_all_users(self) -> List[Dict[str, Any]]:
         """Lists all registered users across all roles (Admin, Clinician, Patient)."""
         users = []
+        memory_users = [
+            {k: v for k, v in u.items() if k not in ("pw_hash", "salt", "_id")}
+            for u in self._memory_users.values()
+        ]
         if self.is_connected and self.db is not None:
-            cursor = self.db[config.MONGO_COLL_USERS].find({}, {"pw_hash": 0, "salt": 0, "_id": 0})
-            users = list(cursor)
+            try:
+                cursor = self.db[config.MONGO_COLL_USERS].find({}, {"pw_hash": 0, "salt": 0, "_id": 0})
+                users = list(cursor)
+            except Exception as e:
+                print(f"[MongoDBManager] Atlas read failed (list_all_users): {e}. Using in-memory copy.")
+                users = memory_users
         else:
-            users = [
-                {k: v for k, v in u.items() if k not in ("pw_hash", "salt", "_id")}
-                for u in self._memory_users.values()
-            ]
+            users = memory_users
         return users
 
     # --- Digital Twin State Persistence ---
@@ -295,6 +319,19 @@ class MongoDBManager:
             "bmi": float(vital_data.get("bmi", 25.0)) if vital_data.get("bmi") else None,
             "notes": vital_data.get("notes", "")
         }
+        # Keep booking values and demographics too (previously dropped, so they were lost on reload)
+        for key in ("booking_ga_weeks", "booking_bmi", "booking_sbp", "booking_dbp"):
+            if vital_data.get(key) is not None:
+                vital_entry[key] = float(vital_data[key])
+        for key in ("maternal_age", "gravida", "parity", "csections", "imdr"):
+            if vital_data.get(key) is not None:
+                vital_entry[key] = int(vital_data[key])
+        if vital_data.get("ethnicity"):
+            vital_entry["ethnicity"] = str(vital_data["ethnicity"]).upper()
+        # Only OGTT values that were actually entered count towards an OGTT diagnosis
+        vital_entry["ogtt_recorded"] = bool(vital_data.get(
+            "ogtt_recorded",
+            vital_data.get("glucose_0min") is not None or vital_data.get("glucose_120min") is not None))
 
         if self.is_connected and self.db is not None:
             try:
